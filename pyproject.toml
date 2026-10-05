@@ -1,0 +1,86 @@
+[project]
+name = "daily-summary"
+version = "0.1.0"
+description = "Саммари проделанной работы за день: задачи и принятые решения из git, транскриптов агентов и чатов Telegram"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Vladimir Voronov", email = "vvoronov@mwnts.ru" }]
+dependencies = []
+
+[project.scripts]
+daily-summary = "app.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12"]
+build-backend = "uv_build"
+
+# Пакет лежит в корне, а не в src/ — как в рабочих проектах.
+[tool.uv.build-backend]
+module-name = "app"
+module-root = ""
+
+# PEP 735, а не [project.optional-dependencies]: группа зависимостей — понятие
+# времени разработки, которое бэкенд сборки не пишет в метаданные колеса, так что
+# pytest не дотянется до того, кто установит пакет. Extra — дотянулся бы.
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "mypy>=1.15",
+    "ruff>=0.15",
+    "commitizen>=4.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+# https://docs.astral.sh/ruff/rules/
+lint.select = ["ALL"]
+lint.ignore = [
+    "COM812",  # конфликтует с ruff format
+    "CPY001",  # копирайт-заголовки: личный проект
+    "D104",    # docstring в __init__.py пакета
+    "D107",    # docstring в __init__
+    "RUF001",  # неоднозначные символы: текст и docstring на русском
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",  # assert — это и есть тест
+    "D103",  # имя теста и есть его описание
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = "double"
+inline-quotes = "double"
+
+[tool.ruff.lint.pylint]
+max-args = 5
+max-positional-args = 3
+
+[tool.ruff.lint.mccabe]
+max-complexity = 6
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+pretty = true
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "$version"
+version_scheme = "pep440"
+version_provider = "uv"
+update_changelog_on_bump = true
+major_version_zero = true
+version_files = ["app/__init__.py"]

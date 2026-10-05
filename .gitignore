@@ -1,0 +1,26 @@
+# Окружение и артефакты сборки
+.venv/
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Кэши инструментов
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+
+# Секреты. Рабочее место конфига — ~/.config/daily-summary/.env,
+# но строка на случай запуска из каталога проекта не повредит.
+.env
+.env.local
+
+# Регенерируется каждым `uv run`; инструмент ставится из исходников.
+uv.lock
+
+# Редакторы
+.idea/
+.DS_Store
