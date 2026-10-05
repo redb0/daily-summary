@@ -1,14 +1,10 @@
-"""Точка входа команды `daily-summary`.
-
-Домен не печатает ничего сам и не решает, как выглядит ошибка — он бросает
-`SummaryError`. Формат вывода выбирается здесь: этот модуль единственный, кто
-знает, что работает в терминале, а не внутри вызова инструмента агентом.
-"""
+"""Точка входа команды `daily-summary`."""
 
 import argparse
 from collections.abc import Sequence
+from importlib.metadata import version
 
-from app import __version__
+DISTRIBUTION = "daily-summary"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,10 +14,14 @@ def build_parser() -> argparse.ArgumentParser:
         Разборщик верхнего уровня.
     """
     parser = argparse.ArgumentParser(
-        prog="daily-summary",
+        prog=DISTRIBUTION,
         description="Саммари проделанной за день работы: задачи и принятые решения.",
     )
-    parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {version(DISTRIBUTION)}",
+    )
     return parser
 
 

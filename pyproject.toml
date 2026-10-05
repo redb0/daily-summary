@@ -42,7 +42,7 @@ target-version = "py312"
 lint.select = ["ALL"]
 lint.ignore = [
     "COM812",  # конфликтует с ruff format
-    "CPY001",  # копирайт-заголовки: личный проект
+    "CPY001",  # требует копирайт-заголовок в каждом файле: личный проект
     "D104",    # docstring в __init__.py пакета
     "D107",    # docstring в __init__
     "RUF001",  # неоднозначные символы: текст и docstring на русском
@@ -80,7 +80,9 @@ pretty = true
 name = "cz_conventional_commits"
 tag_format = "$version"
 version_scheme = "pep440"
+# Версия живёт только в pyproject.toml, а код читает её через
+# importlib.metadata. Дублировать её в app/__init__.py нечего: второе место
+# неизбежно разойдётся с первым.
 version_provider = "uv"
 update_changelog_on_bump = true
 major_version_zero = true
-version_files = ["app/__init__.py"]

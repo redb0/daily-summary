@@ -1,8 +1,9 @@
 default: lint types test
 
-# Проверка линтером
+# Проверка линтером и форматированием
 lint:
     uv run ruff check .
+    uv run ruff format --check .
 
 # Автоформатирование и автоисправления
 fmt:
