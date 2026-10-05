@@ -1,0 +1,51 @@
+[notes]
+daily_dir = "" # пустой по умолчанию: писать некуда
+template = ""
+filename_format = "%Y-%m-%d"
+timezone = "Europe/Moscow"
+
+[state]
+dir = "~/.local/state/daily-summary"
+raw_retention_days = 14
+
+[git]
+roots = ["~/projects"]
+max_depth = 3
+authors = [
+    "vvoronov@mwnts.ru",
+    "vvoronov@sila.ru",
+    "30475117+redb0@users.noreply.github.com",
+]
+include_dirty = true
+exclude_globs = [
+    "*.min.js",
+    "*.lock",
+    "*.sum",
+    "*.pb.go",
+    "*_pb2.py",
+    "*.svg",
+    "*.png",
+    "vendor/*",
+    "dist/*",
+]
+max_diff_lines_per_file = 400
+max_diff_lines_per_commit = 2000
+max_diff_lines_per_day = 6000
+
+[transcripts]
+roots = ["~/.cursor/projects"]
+head_messages = 10
+tail_messages = 10
+
+[telegram]
+enabled = true
+max_messages_per_chat = 500
+page_size = 100
+flood_wait_retry_seconds = 60
+
+[[telegram.chats]]
+id = -1001234567890
+name = "пример: НТР / FM core"
+
+[summary]
+two_stage_threshold_bytes = 100_000

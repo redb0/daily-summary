@@ -5,7 +5,10 @@ description = "Саммари проделанной работы за день:
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Vladimir Voronov", email = "vvoronov@mwnts.ru" }]
-dependencies = []
+dependencies = [
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+]
 
 [project.scripts]
 daily-summary = "app.cli:main"
@@ -54,6 +57,7 @@ lint.ignore = [
 "tests/*" = [
     "S101",  # assert — это и есть тест
     "D103",  # имя теста и есть его описание
+    "PLR2004",  # ожидаемое значение — литерал из спеки, не константа рядом с тестом
 ]
 
 [tool.ruff.lint.pydocstyle]

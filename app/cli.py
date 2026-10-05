@@ -36,7 +36,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     parser = build_parser()
     parser.parse_args(argv)
-    # Подкоманд пока нет — до тикетов 02 и 06 единственное осмысленное
+    # Подкоманд пока нет — до тикета 06 единственное осмысленное
     # поведение без аргументов это справка.
     parser.print_help()
     return 0
