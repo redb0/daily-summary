@@ -7,6 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.collectors.git import collect_git
+from app.collectors.opencode import collect_opencode
 from app.collectors.telegram.collector import collect_telegram
 from app.collectors.transcripts import collect_transcripts
 from app.config import Config
@@ -105,9 +106,10 @@ def _assemble(config: Config, day: date, window: Window, *, generated_at: dateti
 def _sources(config: Config, window: Window) -> tuple[Sources, list[str]]:
     git, git_notes = _git_source(config, window)
     transcripts, transcript_notes = _transcript_source(config, window)
+    opencode, opencode_notes = _opencode_source(config, window)
     telegram, telegram_notes = _telegram_source(config, window)
-    sources = Sources(git=git, transcripts=transcripts, telegram=telegram)
-    return sources, [*git_notes, *transcript_notes, *telegram_notes]
+    sources = Sources(git=git, transcripts=transcripts, opencode=opencode, telegram=telegram)
+    return sources, [*git_notes, *transcript_notes, *opencode_notes, *telegram_notes]
 
 
 def _git_source(config: Config, window: Window) -> tuple[GitSource, list[str]]:
@@ -124,9 +126,24 @@ def _transcript_source(config: Config, window: Window) -> tuple[TranscriptsSourc
     try:
         collected = collect_transcripts(config, window)
     except (OSError, SummaryError) as exc:
-        return _failed_transcripts(exc), []
+        return _failed_sessions(exc), []
     if not collected.sessions:
         return TranscriptsSource(status=SourceStatus.EMPTY), []
+    return (
+        TranscriptsSource(status=SourceStatus.OK, sessions=collected.sessions),
+        list(collected.truncations),
+    )
+
+
+def _opencode_source(config: Config, window: Window) -> tuple[TranscriptsSource, list[str]]:
+    if not config.opencode.enabled:
+        return TranscriptsSource(status=SourceStatus.DISABLED), []
+    try:
+        collected = collect_opencode(config, window)
+    except (OSError, SummaryError) as exc:
+        return _failed_sessions(exc), []
+    if not collected.sessions:
+        return TranscriptsSource(status=SourceStatus.EMPTY), list(collected.truncations)
     return (
         TranscriptsSource(status=SourceStatus.OK, sessions=collected.sessions),
         list(collected.truncations),
@@ -162,7 +179,7 @@ def _failed_git(exc: Exception) -> GitSource:
     return GitSource(status=SourceStatus.UNAVAILABLE, code=code, reason=reason)
 
 
-def _failed_transcripts(exc: Exception) -> TranscriptsSource:
+def _failed_sessions(exc: Exception) -> TranscriptsSource:
     code, reason = _error_parts(exc)
     return TranscriptsSource(status=SourceStatus.UNAVAILABLE, code=code, reason=reason)
 
@@ -178,7 +195,7 @@ def _error_parts(exc: Exception) -> tuple[ErrorCode | None, str]:
 
 def _stats(sources: Sources) -> Stats:
     commits = sum(len(repo.commits) for repo in sources.git.repos)
-    sessions = sources.transcripts.sessions
+    sessions = [*sources.transcripts.sessions, *sources.opencode.sessions]
     messages = sum(len(session.messages) for session in sessions)
     messages += sum(len(chat.messages) for chat in sources.telegram.chats)
     return Stats(commits=commits, messages=messages, sessions=len(sessions), bytes=0)

@@ -169,6 +169,7 @@ def _unavailable(dump: RawDump) -> list[str]:
     named = (
         ("git", dump.sources.git),
         ("transcripts", dump.sources.transcripts),
+        ("opencode", dump.sources.opencode),
         ("telegram", dump.sources.telegram),
     )
     return [

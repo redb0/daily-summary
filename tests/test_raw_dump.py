@@ -43,6 +43,8 @@ def test_raw_dump_round_trip() -> None:
     assert dump.sources.git.repos == []
     assert dump.sources.transcripts.status == "ok"
     assert dump.sources.transcripts.sessions == []
+    assert dump.sources.opencode.status == "disabled"
+    assert dump.sources.opencode.sessions == []
     assert dump.sources.telegram.status == "unavailable"
     assert dump.sources.telegram.code == "FLOOD_WAIT"
     assert dump.sources.telegram.reason == "…"

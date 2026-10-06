@@ -123,6 +123,15 @@ def _default_transcript_roots() -> list[Path]:
     return [Path.home() / ".cursor" / "projects"]
 
 
+def _default_opencode_db() -> Path:
+    """База сессий OpenCode.
+
+    Returns:
+        Путь по умолчанию.
+    """
+    return Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+
+
 class NotesConfig(BaseModel):
     """Куда и как писать ежедневную заметку.
 
@@ -224,6 +233,30 @@ class TranscriptsConfig(BaseModel):
         return _expand_path_list(value)
 
 
+class OpencodeConfig(BaseModel):
+    """Чтение сессий OpenCode. Лимиты не общие с транскриптами Cursor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    db: Path = Field(default_factory=_default_opencode_db)
+    head_messages: int = 10
+    tail_messages: int = 10
+
+    @field_validator("db", mode="before")
+    @classmethod
+    def expand_db(cls, value: object) -> Path:
+        """Развернуть `~` в пути к базе.
+
+        Args:
+            value: Значение поля из toml.
+
+        Returns:
+            Файл базы.
+        """
+        return _expand_required_path(value)
+
+
 class TelegramChat(BaseModel):
     """Чат из белого списка."""
 
@@ -262,6 +295,7 @@ class Config(BaseSettings):
     state: StateConfig = Field(default_factory=StateConfig)
     git: GitConfig = Field(default_factory=GitConfig)
     transcripts: TranscriptsConfig = Field(default_factory=TranscriptsConfig)
+    opencode: OpencodeConfig = Field(default_factory=OpencodeConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     tg_api_id: int | None = None

@@ -16,6 +16,7 @@ from app.config import (
     Config,
     GitConfig,
     NotesConfig,
+    OpencodeConfig,
     StateConfig,
     TelegramChat,
     TelegramConfig,
@@ -353,9 +354,10 @@ def test_stored_dump_counts_telegram_messages(
         notes=NotesConfig(timezone="Europe/Moscow"),
         state=StateConfig(dir=tmp_path / "state"),
         git=GitConfig(roots=[repos], authors=["nobody@example.com"]),
-        transcripts=TranscriptsConfig(roots=[transcripts]),
-        telegram=TelegramConfig(chats=[TelegramChat(id=7, name="личка")]),
-    )
+            transcripts=TranscriptsConfig(roots=[transcripts]),
+            opencode=OpencodeConfig(enabled=False),
+            telegram=TelegramConfig(chats=[TelegramChat(id=7, name="личка")]),
+        )
 
     _path, dump = collect_and_store(config, "2026-10-05")
 

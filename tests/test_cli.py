@@ -282,6 +282,43 @@ def test_collect_masks_secrets_before_writing_the_dump(
     )
 
 
+def test_collect_marks_missing_opencode_unavailable_and_keeps_commits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    moment = datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, moment)
+    _commit(tmp_path / "repos" / "demo", "коммит на месте", moment)
+    missing = tmp_path / "missing.db"
+    config = _config_file(tmp_path, opencode_db=missing)
+
+    exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
+
+    payload = json.loads(
+        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
+    )
+    opencode = payload["sources"]["opencode"]
+    reason = f"База OpenCode не найдена: {missing}"
+    assert (
+        exit_code,
+        payload["sources"]["git"]["status"],
+        payload["sources"]["transcripts"]["status"],
+        opencode["status"],
+        opencode["reason"],
+        capsys.readouterr().out.splitlines()[-1],
+    ) == (
+        0,
+        "ok",
+        "empty",
+        "unavailable",
+        reason,
+        f"недоступно: opencode — {reason}",
+    )
+
+
 def test_collect_keeps_commits_when_a_transcript_cannot_be_read(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -466,6 +503,7 @@ def _config_file(
     root: Path,
     *,
     telegram: bool = False,
+    opencode_db: Path | None = None,
     daily_dir: Path | None = None,
     retention_days: int = 14,
 ) -> Path:
@@ -490,6 +528,10 @@ def _config_file(
                 "",
                 "[transcripts]",
                 f'roots = ["{root / "transcripts"}"]',
+                "",
+                "[opencode]",
+                f"enabled = {'true' if opencode_db is not None else 'false'}",
+                *([f'db = "{opencode_db}"'] if opencode_db is not None else []),
                 "",
                 "[telegram]",
                 f"enabled = {'true' if telegram else 'false'}",

@@ -37,6 +37,12 @@ roots = ["~/.cursor/projects"]
 head_messages = 10
 tail_messages = 10
 
+[opencode]
+enabled = true
+db = "~/.local/share/opencode/opencode.db"
+head_messages = 10
+tail_messages = 10
+
 [telegram]
 enabled = true
 max_messages_per_chat = 500

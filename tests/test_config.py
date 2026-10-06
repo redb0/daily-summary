@@ -63,6 +63,10 @@ def test_missing_file_uses_builtin_defaults(
     assert config.transcripts.roots == [home / ".cursor" / "projects"]
     assert config.transcripts.head_messages == 10
     assert config.transcripts.tail_messages == 10
+    assert config.opencode.enabled is True
+    assert config.opencode.db == home / ".local" / "share" / "opencode" / "opencode.db"
+    assert config.opencode.head_messages == 10
+    assert config.opencode.tail_messages == 10
     assert config.telegram.enabled is True
     assert config.telegram.max_messages_per_chat == 500
     assert config.telegram.page_size == 100
@@ -126,6 +130,12 @@ roots = ["~/transcripts"]
 head_messages = 2
 tail_messages = 4
 
+[opencode]
+enabled = false
+db = "~/opencode.db"
+head_messages = 3
+tail_messages = 5
+
 [telegram]
 enabled = false
 max_messages_per_chat = 5
@@ -161,6 +171,10 @@ two_stage_threshold_bytes = 50
     assert config.transcripts.roots == [home / "transcripts"]
     assert config.transcripts.head_messages == 2
     assert config.transcripts.tail_messages == 4
+    assert config.opencode.enabled is False
+    assert config.opencode.db == home / "opencode.db"
+    assert config.opencode.head_messages == 3
+    assert config.opencode.tail_messages == 5
     assert config.telegram.enabled is False
     assert config.telegram.max_messages_per_chat == 5
     assert config.telegram.page_size == 6
@@ -302,6 +316,10 @@ def test_example_config_loads(
     assert config.git.max_diff_lines_per_commit == 2000
     assert config.git.max_diff_lines_per_day == 6000
     assert config.transcripts.roots == [home / ".cursor" / "projects"]
+    assert config.opencode.enabled is True
+    assert config.opencode.db == home / ".local" / "share" / "opencode" / "opencode.db"
+    assert config.opencode.head_messages == 10
+    assert config.opencode.tail_messages == 10
     assert config.telegram.enabled is True
     assert [(chat.id, chat.name) for chat in config.telegram.chats] == [
         (-1001234567890, "пример: НТР / FM core"),

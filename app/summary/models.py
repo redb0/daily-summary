@@ -85,7 +85,11 @@ class TranscriptMessage(BaseModel):
 
 
 class TranscriptSession(BaseModel):
-    """Одна сессия Cursor. `project` — имя каталога в корне транскриптов."""
+    """Одна сессия агента.
+
+    `project` у Cursor — имя каталога в корне транскриптов, у OpenCode —
+    путь `session.directory`.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -95,9 +99,18 @@ class TranscriptSession(BaseModel):
 
 
 class TranscriptsSource(Source):
-    """Сессии Cursor. Содержимое `sessions` заполняет сборщик транскриптов."""
+    """Сессии агента. Одно и то же поле у Cursor и у OpenCode."""
 
     sessions: list[TranscriptSession] = Field(default_factory=list)
+
+
+def _disabled_opencode() -> TranscriptsSource:
+    """Старые дампы не знали про OpenCode.
+
+    Returns:
+        Выключенный источник без сессий.
+    """
+    return TranscriptsSource(status=SourceStatus.DISABLED)
 
 
 class TelegramMessage(BaseModel):
@@ -132,12 +145,16 @@ class TelegramSource(Source):
 
 
 class Sources(BaseModel):
-    """Три источника, каждый со своим статусом."""
+    """Источники дня, каждый со своим статусом.
+
+    `opencode` по умолчанию выключен: старый дамп без этого ключа читается.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     git: GitSource
     transcripts: TranscriptsSource
+    opencode: TranscriptsSource = Field(default_factory=_disabled_opencode)
     telegram: TelegramSource
 
 
