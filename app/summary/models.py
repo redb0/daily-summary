@@ -37,10 +37,42 @@ class Source(BaseModel):
     reason: str | None = None
 
 
+class GitCommit(BaseModel):
+    """Коммит из окна дня: метаданные и уже усечённый diff."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sha: str
+    committed_at: AwareDatetime
+    message: str
+    files: list[str]
+    diffstat: str
+    diff: str | None = None
+
+
+class GitDirty(BaseModel):
+    """Незакоммиченные изменения. Полный diff сюда не кладём: его нет в задаче."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    files: list[str]
+    diffstat: str
+
+
+class GitRepo(BaseModel):
+    """Один локальный репозиторий, в котором нашлась работа за окно."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    commits: list[GitCommit]
+    dirty: GitDirty | None = None
+
+
 class GitSource(Source):
     """Коммиты. Содержимое `repos` заполняет сборщик git."""
 
-    repos: list[dict[str, Any]] = Field(default_factory=list)
+    repos: list[GitRepo] = Field(default_factory=list)
 
 
 class TranscriptsSource(Source):
