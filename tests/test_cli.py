@@ -227,6 +227,9 @@ def test_collect_marks_telegram_unavailable_and_keeps_other_sources(
     moment = datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW)
     _freeze(monkeypatch, moment)
     _commit(tmp_path / "repos" / "demo", "коммит без чатов", moment)
+    env = home / ".config" / "daily-summary" / ".env"
+    env.parent.mkdir(parents=True)
+    env.write_text("TG_API_ID=1\nTG_API_HASH=hash\nTG_PHONE=+79990000000\n", encoding="utf-8")
     config = _config_file(tmp_path, telegram=True)
 
     exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
@@ -235,22 +238,23 @@ def test_collect_marks_telegram_unavailable_and_keeps_other_sources(
         (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
     )
     telegram = payload["sources"]["telegram"]
+    reason = f"Сессия Telegram не найдена: {tmp_path / 'state' / 'session.session'}"
     assert (
         exit_code,
         payload["sources"]["git"]["status"],
         payload["stats"]["commits"],
         telegram["status"],
+        telegram["code"],
         telegram["reason"],
-        "code" in telegram,
         capsys.readouterr().out.splitlines()[-1],
     ) == (
         0,
         "ok",
         1,
         "unavailable",
-        "Сборщик Telegram ещё не подключён.",
-        False,
-        "недоступно: telegram — Сборщик Telegram ещё не подключён.",
+        "NO_SESSION",
+        reason,
+        f"недоступно: telegram — NO_SESSION: {reason}",
     )
 
 

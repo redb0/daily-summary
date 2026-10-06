@@ -2,7 +2,7 @@
 
 from datetime import date
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
@@ -100,10 +100,35 @@ class TranscriptsSource(Source):
     sessions: list[TranscriptSession] = Field(default_factory=list)
 
 
-class TelegramSource(Source):
-    """Чаты Telegram. Содержимое `chats` заполняет сборщик Telegram."""
+class TelegramMessage(BaseModel):
+    """Сообщение из белого списка. Реакции и служебные события сюда не попадают."""
 
-    chats: list[dict[str, Any]] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+
+    sent_at: AwareDatetime
+    author: str | None = None
+    text: str
+
+
+class TelegramChatLog(BaseModel):
+    """Один чат за окно дня. `name` — подпись из конфига."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    name: str
+    messages: list[TelegramMessage]
+
+
+class TelegramSource(Source):
+    """Чаты Telegram. Содержимое заполняет сборщик Telegram.
+
+    `unlisted_active` — сколько чатов с активностью в окне нет в конфиге.
+    Содержимое этих чатов не читается.
+    """
+
+    chats: list[TelegramChatLog] = Field(default_factory=list)
+    unlisted_active: int = 0
 
 
 class Sources(BaseModel):

@@ -7,6 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.collectors.git import collect_git
+from app.collectors.telegram.collector import collect_telegram
 from app.collectors.transcripts import collect_transcripts
 from app.config import Config
 from app.errors import ErrorCode, SummaryError
@@ -26,7 +27,6 @@ from app.summary.models import (
 _TODAY = "today"
 _YESTERDAY = "yesterday"
 RELATIVE_DAYS = frozenset({_TODAY, _YESTERDAY})
-_TELEGRAM_MISSING = "Сборщик Telegram ещё не подключён."
 
 
 def local_now(timezone_name: str) -> datetime:
@@ -105,8 +105,9 @@ def _assemble(config: Config, day: date, window: Window, *, generated_at: dateti
 def _sources(config: Config, window: Window) -> tuple[Sources, list[str]]:
     git, git_notes = _git_source(config, window)
     transcripts, transcript_notes = _transcript_source(config, window)
-    sources = Sources(git=git, transcripts=transcripts, telegram=_telegram_source(config))
-    return sources, [*git_notes, *transcript_notes]
+    telegram, telegram_notes = _telegram_source(config, window)
+    sources = Sources(git=git, transcripts=transcripts, telegram=telegram)
+    return sources, [*git_notes, *transcript_notes, *telegram_notes]
 
 
 def _git_source(config: Config, window: Window) -> tuple[GitSource, list[str]]:
@@ -132,10 +133,28 @@ def _transcript_source(config: Config, window: Window) -> tuple[TranscriptsSourc
     )
 
 
-def _telegram_source(config: Config) -> TelegramSource:
+def _telegram_source(config: Config, window: Window) -> tuple[TelegramSource, list[str]]:
     if not config.telegram.enabled:
-        return TelegramSource(status=SourceStatus.DISABLED)
-    return TelegramSource(status=SourceStatus.UNAVAILABLE, reason=_TELEGRAM_MISSING)
+        return TelegramSource(status=SourceStatus.DISABLED), []
+    try:
+        collected = collect_telegram(config, window)
+    except (OSError, SummaryError) as exc:
+        return _failed_telegram(exc), []
+    if not collected.chats and collected.unlisted_active == 0:
+        return TelegramSource(status=SourceStatus.EMPTY), list(collected.truncations)
+    return (
+        TelegramSource(
+            status=SourceStatus.OK,
+            chats=collected.chats,
+            unlisted_active=collected.unlisted_active,
+        ),
+        list(collected.truncations),
+    )
+
+
+def _failed_telegram(exc: Exception) -> TelegramSource:
+    code, reason = _error_parts(exc)
+    return TelegramSource(status=SourceStatus.UNAVAILABLE, code=code, reason=reason)
 
 
 def _failed_git(exc: Exception) -> GitSource:
@@ -161,6 +180,7 @@ def _stats(sources: Sources) -> Stats:
     commits = sum(len(repo.commits) for repo in sources.git.repos)
     sessions = sources.transcripts.sessions
     messages = sum(len(session.messages) for session in sessions)
+    messages += sum(len(chat.messages) for chat in sources.telegram.chats)
     return Stats(commits=commits, messages=messages, sessions=len(sessions), bytes=0)
 
 

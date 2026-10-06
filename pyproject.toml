@@ -8,6 +8,7 @@ authors = [{ name = "Vladimir Voronov", email = "vvoronov@mwnts.ru" }]
 dependencies = [
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
+    "telethon>=1.45.0",
 ]
 
 [project.scripts]
@@ -79,6 +80,10 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 pretty = true
+
+[[tool.mypy.overrides]]
+module = ["telethon", "telethon.*"]
+ignore_missing_imports = true
 
 [tool.commitizen]
 name = "cz_conventional_commits"

@@ -1,12 +1,16 @@
 """Точка входа команды `daily-summary`."""
 
 import argparse
+import asyncio
+import getpass
 import sys
 from collections.abc import Sequence
 from datetime import date
 from importlib.metadata import version
 from pathlib import Path
 
+from app.collectors.telegram.chats import load_chats
+from app.collectors.telegram.init import run_init
 from app.config import Config, load_config
 from app.errors import ErrorCode, SummaryError
 from app.notes.writer import write_note
@@ -41,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("--body", type=_stdin_body, required=True)
     write.add_argument("--apply", action="store_true")
     write.add_argument("--config", type=Path, default=None)
+    init = commands.add_parser("init", help="Настроить доступ к Telegram в своём терминале.")
+    init.add_argument("--relogin", action="store_true")
+    init.add_argument("--config", type=Path, default=None)
+    chats = commands.add_parser("chats", help="Показать чаты и фрагмент конфига.")
+    chats.add_argument("--config", type=Path, default=None)
     return parser
 
 
@@ -101,7 +110,11 @@ def _dispatch(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     if args.command == "collect":
         return _run_collect(config, args.date)
-    return _run_write(config, args.date, apply=args.apply)
+    if args.command == "write":
+        return _run_write(config, args.date, apply=args.apply)
+    if args.command == "init":
+        return _run_init(config, relogin=args.relogin)
+    return _run_chats(config)
 
 
 def _run_collect(config: Config, token: str | None) -> int:
@@ -114,6 +127,25 @@ def _run_write(config: Config, token: str, *, apply: bool) -> int:
     day = resolve_day(token, today=local_now(config.notes.timezone).date())
     result = write_note(config, day, sys.stdin.read(), apply=apply)
     sys.stdout.write(result.diff)
+    return 0
+
+
+def _run_init(config: Config, *, relogin: bool) -> int:
+    account = run_init(config, relogin=relogin, ask=_ask_credential)
+    sys.stdout.write(f"Вошли как {account}\n")
+    return 0
+
+
+def _ask_credential(key: str) -> str:
+    if key == "TG_API_HASH":
+        return getpass.getpass("TG_API_HASH: ")
+    if key == "TG_API_ID":
+        return input("TG_API_ID (https://my.telegram.org/apps): ")
+    return input("TG_PHONE (+7999…): ")
+
+
+def _run_chats(config: Config) -> int:
+    sys.stdout.write(asyncio.run(load_chats(config)))
     return 0
 
 
