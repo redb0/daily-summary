@@ -12,6 +12,8 @@ class ErrorCode(StrEnum):
     CANNOT_RESOLVE = "CANNOT_RESOLVE"
     NOT_A_MEMBER = "NOT_A_MEMBER"
     NO_NOTES_DIR = "NO_NOTES_DIR"
+    NO_TEMPLATE = "NO_TEMPLATE"
+    BROKEN_MARKERS = "BROKEN_MARKERS"
 
 
 class SummaryError(Exception):
