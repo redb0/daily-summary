@@ -1,0 +1,5 @@
+{"role": "user", "message": {"content": [{"type": "text", "text": "задача"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "план"}]}}
+{"role": "user", "message": {"content": [{"type": "text", "text": "середина-1"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "середина-2"}]}}
+{"role": "user", "message": {"content": [{"type": "text", "text": "итог"}]}}

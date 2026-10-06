@@ -75,10 +75,29 @@ class GitSource(Source):
     repos: list[GitRepo] = Field(default_factory=list)
 
 
+class TranscriptMessage(BaseModel):
+    """Текст реплики. Блоки инструментов в дамп не попадают."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "assistant"]
+    text: str
+
+
+class TranscriptSession(BaseModel):
+    """Одна сессия Cursor. `project` — имя каталога в корне транскриптов."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    id: str
+    messages: list[TranscriptMessage]
+
+
 class TranscriptsSource(Source):
     """Сессии Cursor. Содержимое `sessions` заполняет сборщик транскриптов."""
 
-    sessions: list[dict[str, Any]] = Field(default_factory=list)
+    sessions: list[TranscriptSession] = Field(default_factory=list)
 
 
 class TelegramSource(Source):

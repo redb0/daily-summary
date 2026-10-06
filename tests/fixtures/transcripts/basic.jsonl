@@ -1,0 +1,2 @@
+{"role": "user", "message": {"content": [{"type": "text", "text": "добавить сборщик"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "сделаю"}]}}

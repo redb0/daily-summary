@@ -1,0 +1,4 @@
+{"role": "user", "message": {"content": [{"type": "text", "text": "заметка снаружи\n<manually_attached_skills>\nскилл про сборщик\n</manually_attached_skills>\n<system_reminder>\nне шуми\n</system_reminder>\n<open_and_recently_viewed_files>\nfoo.py\n</open_and_recently_viewed_files>\n<user_info>\nlinux\n</user_info>\n<timestamp>Monday, Oct 5, 2026, 12:00 PM (UTC+3)</timestamp>\n<user_query>\nисправь баг\n</user_query>"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "смотрю"}, {"type": "tool_use", "name": "Shell", "input": {"command": "ls"}}, {"type": "text", "text": "готово"}]}}
+{"role": "user", "message": {"content": [{"type": "tool_result", "content": "secret-output"}]}}
+{"type": "turn_ended", "status": "success"}
