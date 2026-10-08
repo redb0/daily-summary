@@ -8,6 +8,7 @@ import tomllib
 from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -72,51 +73,60 @@ def test_collect_writes_private_dump_and_prints_summary(
 
     exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
 
-    dump_path = tmp_path / "state" / "raw" / "2026-10-05.json"
-    payload = json.loads(dump_path.read_text(encoding="utf-8"))
-    size = dump_path.stat().st_size
-    commit = payload["sources"]["git"]["repos"][0]["commits"][0]
-    session = payload["sources"]["transcripts"]["sessions"][0]
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    names = ("git", "transcripts", "opencode", "telegram")
+    files = [day_dir / f"{name}.json" for name in names]
+    payloads = [json.loads(path.read_text(encoding="utf-8")) for path in files]
+    total = sum(path.stat().st_size for path in files)
+    window = {
+        "from": "2026-10-05T00:00:00+03:00",
+        "to": "2026-10-05T23:59:59.999999+03:00",
+    }
     assert (
         exit_code,
         capsys.readouterr().out,
-        dump_path.stat().st_mode & 0o777,
-        (tmp_path / "state").stat().st_mode & 0o777,
-        (tmp_path / "state" / "raw").stat().st_mode & 0o777,
-        payload["date"],
-        payload["window"],
-        payload["generated_at"],
-        commit["message"],
-        session["messages"],
-        payload["sources"]["telegram"]["status"],
-        payload["stats"]["commits"],
-        payload["stats"]["sessions"],
-        payload["stats"]["messages"],
-        payload["stats"]["bytes"],
+        [path.stat().st_mode & 0o777 for path in files],
+        [(tmp_path / "state").stat().st_mode & 0o777, (day_dir.parent).stat().st_mode & 0o777],
+        day_dir.stat().st_mode & 0o777,
+        (day_dir.parent / "2026-10-05.json").exists(),
+        [
+            (
+                item["schema_version"],
+                item["date"],
+                item["window"],
+                item["generated_at"],
+                item["bytes"],
+            )
+            for item in payloads
+        ],
+        payloads[0]["repos"][0]["commits"][0]["message"],
+        payloads[1]["sessions"][0]["messages"],
+        (payloads[2]["status"], payloads[3]["status"]),
         (home / ".local" / "state").exists(),
     ) == (
         0,
         (
-            f"{dump_path}\n"
-            f"репозиториев: 1, коммитов: 1, сессий: 1, сообщений: 1, "
-            f"байт: {payload['stats']['bytes']}\n"
+            f"{day_dir}\n"
+            "дата: 2026-10-05\n"
+            f"байты: {total}\n"
+            "порог: 100000\n"
+            "порог превышен: нет\n"
+            "git: ok, репозиториев: 1, коммитов: 1\n"
+            "transcripts: ok, сессий: 1\n"
+            "opencode: выключен, сессий: 0\n"
+            "telegram: выключен, чатов: 0, unlisted: 0\n"
         ),
-        0o600,
+        [0o600, 0o600, 0o600, 0o600],
+        [0o700, 0o700],
         0o700,
-        0o700,
-        "2026-10-05",
-        {
-            "from": "2026-10-05T00:00:00+03:00",
-            "to": "2026-10-05T23:59:59.999999+03:00",
-        },
-        "2026-10-05T18:00:00+03:00",
+        False,
+        [
+            (2, "2026-10-05", window, "2026-10-05T18:00:00+03:00", path.stat().st_size)
+            for path in files
+        ],
         "добавил заметку",
         [{"role": "user", "text": "сделал штуку"}],
-        "disabled",
-        1,
-        1,
-        1,
-        size,
+        ("disabled", "disabled"),
         False,
     )
 
@@ -136,22 +146,14 @@ def test_collect_default_window_stops_at_now_and_date_today_covers_the_day(
     config = _config_file(tmp_path)
 
     default_code = main(["collect", "--config", str(config)])
-    default_payload = json.loads(
-        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
-    )
+    default_payload = _stored(tmp_path, "2026-10-05", "git")
     capsys.readouterr()
 
     today_code = main(["collect", "--date", "today", "--config", str(config)])
-    today_payload = json.loads(
-        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
-    )
+    today_payload = _stored(tmp_path, "2026-10-05", "git")
 
-    default_messages = [
-        commit["message"] for commit in default_payload["sources"]["git"]["repos"][0]["commits"]
-    ]
-    today_messages = [
-        commit["message"] for commit in today_payload["sources"]["git"]["repos"][0]["commits"]
-    ]
+    default_messages = [commit["message"] for commit in default_payload["repos"][0]["commits"]]
+    today_messages = [commit["message"] for commit in today_payload["repos"][0]["commits"]]
     assert (
         default_code,
         default_payload["window"],
@@ -167,7 +169,7 @@ def test_collect_default_window_stops_at_now_and_date_today_covers_the_day(
         0,
         "2026-10-05T23:59:59.999999+03:00",
         ["утром", "вечером"],
-        str(tmp_path / "state" / "raw" / "2026-10-05.json"),
+        str(tmp_path / "state" / "raw" / "2026-10-05"),
     )
 
 
@@ -190,13 +192,11 @@ def test_collect_without_date_keeps_uncommitted_after_the_window_closes(
 
     exit_code = main(["collect", "--config", str(config)])
 
-    payload = json.loads(
-        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
-    )
+    payload = _stored(tmp_path, "2026-10-05", "git")
     assert (
         exit_code,
         payload["window"]["to"],
-        payload["sources"]["git"]["repos"][0].get("dirty"),
+        payload["repos"][0].get("dirty"),
     ) == (
         0,
         "2026-10-05T15:00:00+03:00",
@@ -224,10 +224,8 @@ def test_collect_named_past_day_omits_uncommitted(
 
     exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
 
-    payload = json.loads(
-        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
-    )
-    repo_dump = payload["sources"]["git"]["repos"][0]
+    payload = _stored(tmp_path, "2026-10-05", "git")
+    repo_dump = payload["repos"][0]
     assert (
         exit_code,
         payload["window"]["to"],
@@ -262,10 +260,8 @@ def test_collect_today_covers_the_day_and_keeps_uncommitted(
 
     exit_code = main(["collect", "--date", "today", "--config", str(config)])
 
-    payload = json.loads(
-        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
-    )
-    repo_dump = payload["sources"]["git"]["repos"][0]
+    payload = _stored(tmp_path, "2026-10-05", "git")
+    repo_dump = payload["repos"][0]
     assert (
         exit_code,
         payload["window"]["to"],
@@ -293,10 +289,8 @@ def test_collect_yesterday_is_the_previous_calendar_day(
 
     exit_code = main(["collect", "--date", "yesterday", "--config", str(config)])
 
-    payload = json.loads(
-        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
-    )
-    messages = [commit["message"] for commit in payload["sources"]["git"]["repos"][0]["commits"]]
+    payload = _stored(tmp_path, "2026-10-05", "git")
+    messages = [commit["message"] for commit in payload["repos"][0]["commits"]]
     assert (exit_code, payload["date"], payload["window"]["from"], messages) == (
         0,
         "2026-10-05",
@@ -317,15 +311,141 @@ def test_collect_drops_dumps_older_than_retention(
     raw.mkdir(parents=True)
     for name in ("2026-09-01.json", "2026-09-21.json", "2026-09-22.json", "notes.json"):
         (raw / name).write_text("{}", encoding="utf-8")
+    expired = raw / "2026-09-21"
+    expired.mkdir()
+    (expired / "git.json").write_text("{не json", encoding="utf-8")
+    kept = raw / "2026-09-22"
+    kept.mkdir()
+    (kept / "git.json").write_text("оставить", encoding="utf-8")
     config = _config_file(tmp_path, retention_days=14)
 
     exit_code = main(["collect", "--date", "2026-09-01", "--config", str(config)])
 
     names = sorted(path.name for path in raw.iterdir())
-    assert (exit_code, names, capsys.readouterr().out.splitlines()[0]) == (
+    lines = capsys.readouterr().out.splitlines()
+    assert (
+        exit_code,
+        names,
+        lines[0],
+        lines[1],
+        (kept / "git.json").read_text(encoding="utf-8"),
+    ) == (
         0,
-        ["2026-09-22.json", "notes.json"],
+        ["2026-09-22", "2026-09-22.json", "notes.json"],
         "дамп не сохранён: дата старше ретенции",
+        "дата: 2026-09-01",
+        "оставить",
+    )
+
+
+def test_collect_summary_says_the_threshold_is_exceeded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    _freeze(monkeypatch, datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW))
+    config = _config_file(tmp_path)
+    config.write_text(
+        config.read_text(encoding="utf-8") + "\n[summary]\ntwo_stage_threshold_bytes = 1\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
+
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    total = sum(path.stat().st_size for path in day_dir.glob("*.json"))
+    assert (exit_code, capsys.readouterr().out.splitlines()[1:5]) == (
+        0,
+        [
+            "дата: 2026-10-05",
+            f"байты: {total}",
+            "порог: 1",
+            "порог превышен: да",
+        ],
+    )
+
+
+def test_collect_summary_prints_truncations_without_commit_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    moment = datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, moment)
+    _commit(tmp_path / "repos" / "demo", "уникальная строка", moment)
+    config = _config_file(tmp_path)
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "[git]\n",
+            "[git]\nmax_diff_lines_per_day = 1\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
+
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    commit = _stored(tmp_path, "2026-10-05", "git")["repos"][0]["commits"][0]
+    total = sum(path.stat().st_size for path in day_dir.glob("*.json"))
+    note = (
+        f"demo: diff коммита {commit['sha']} снят из-за лимита "
+        "1 строк на день: оставлен только diffstat"
+    )
+    assert (
+        exit_code,
+        commit["message"],
+        commit.get("diff"),
+        capsys.readouterr().out,
+    ) == (
+        0,
+        "уникальная строка",
+        None,
+        (
+            f"{day_dir}\n"
+            "дата: 2026-10-05\n"
+            f"байты: {total}\n"
+            "порог: 100000\n"
+            "порог превышен: нет\n"
+            "git: ok, репозиториев: 1, коммитов: 1\n"
+            "transcripts: пустой, сессий: 0\n"
+            "opencode: выключен, сессий: 0\n"
+            "telegram: выключен, чатов: 0, unlisted: 0\n"
+            f"{note}\n"
+        ),
+    )
+
+
+def test_collect_ignores_a_legacy_single_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    moment = datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, moment)
+    _commit(tmp_path / "repos" / "demo", "добавил заметку", moment)
+    raw = tmp_path / "state" / "raw"
+    raw.mkdir(parents=True)
+    legacy = raw / "2026-10-05.json"
+    legacy.write_text("это не json", encoding="utf-8")
+    config = _config_file(tmp_path)
+
+    exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
+
+    git = _stored(tmp_path, "2026-10-05", "git")
+    assert (
+        exit_code,
+        legacy.read_text(encoding="utf-8"),
+        git["repos"][0]["commits"][0]["message"],
+    ) == (
+        0,
+        "это не json",
+        "добавил заметку",
     )
 
 
@@ -346,15 +466,13 @@ def test_collect_marks_telegram_unavailable_and_keeps_other_sources(
 
     exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
 
-    payload = json.loads(
-        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
-    )
-    telegram = payload["sources"]["telegram"]
+    git = _stored(tmp_path, "2026-10-05", "git")
+    telegram = _stored(tmp_path, "2026-10-05", "telegram")
     reason = f"Сессия Telegram не найдена: {tmp_path / 'state' / 'session.session'}"
     assert (
         exit_code,
-        payload["sources"]["git"]["status"],
-        payload["stats"]["commits"],
+        git["status"],
+        len(git["repos"][0]["commits"]),
         telegram["status"],
         telegram["code"],
         telegram["reason"],
@@ -366,7 +484,7 @@ def test_collect_marks_telegram_unavailable_and_keeps_other_sources(
         "unavailable",
         "NO_SESSION",
         reason,
-        f"недоступно: telegram — NO_SESSION: {reason}",
+        "telegram: недоступен, чатов: 0, unlisted: 0",
     )
 
 
@@ -384,9 +502,9 @@ def test_collect_masks_secrets_before_writing_the_dump(
 
     exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
 
-    raw = (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8")
+    raw = (tmp_path / "state" / "raw" / "2026-10-05" / "git.json").read_text(encoding="utf-8")
     payload = json.loads(raw)
-    message = payload["sources"]["git"]["repos"][0]["commits"][0]["message"]
+    message = payload["repos"][0]["commits"][0]["message"]
     assert (exit_code, message, token if token in raw else "") == (
         0,
         "утечка [REDACTED] в коммите",
@@ -409,25 +527,24 @@ def test_collect_marks_missing_opencode_unavailable_and_keeps_commits(
 
     exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
 
-    payload = json.loads(
-        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
-    )
-    opencode = payload["sources"]["opencode"]
+    git = _stored(tmp_path, "2026-10-05", "git")
+    transcripts = _stored(tmp_path, "2026-10-05", "transcripts")
+    opencode = _stored(tmp_path, "2026-10-05", "opencode")
     reason = f"База OpenCode не найдена: {missing}"
     assert (
         exit_code,
-        payload["sources"]["git"]["status"],
-        payload["sources"]["transcripts"]["status"],
+        git["status"],
+        transcripts["status"],
         opencode["status"],
         opencode["reason"],
-        capsys.readouterr().out.splitlines()[-1],
+        capsys.readouterr().out.splitlines()[7],
     ) == (
         0,
         "ok",
         "empty",
         "unavailable",
         reason,
-        f"недоступно: opencode — {reason}",
+        "opencode: недоступен, сессий: 0",
     )
 
 
@@ -450,29 +567,38 @@ def test_collect_keeps_commits_when_a_transcript_cannot_be_read(
     config = _config_file(tmp_path)
     try:
         exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
-        payload = json.loads(
-            (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
-        )
     finally:
         transcript.chmod(0o644)
 
-    dump_path = tmp_path / "state" / "raw" / "2026-10-05.json"
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    git = _stored(tmp_path, "2026-10-05", "git")
+    transcripts = _stored(tmp_path, "2026-10-05", "transcripts")
+    total = sum(path.stat().st_size for path in day_dir.glob("*.json"))
     reason = f"[Errno 13] Permission denied: '{transcript}'"
     report = capsys.readouterr().out
     assert (
         exit_code,
-        payload["sources"]["git"]["repos"][0]["commits"][0]["message"],
-        payload["sources"]["transcripts"],
+        git["repos"][0]["commits"][0]["message"],
+        transcripts["status"],
+        transcripts["reason"],
+        transcripts["sessions"],
         report,
     ) == (
         0,
         "коммит на месте",
-        {"status": "unavailable", "reason": reason, "sessions": []},
+        "unavailable",
+        reason,
+        [],
         (
-            f"{dump_path}\n"
-            f"репозиториев: 1, коммитов: 1, сессий: 0, сообщений: 0, "
-            f"байт: {payload['stats']['bytes']}\n"
-            f"недоступно: transcripts — {reason}\n"
+            f"{day_dir}\n"
+            "дата: 2026-10-05\n"
+            f"байты: {total}\n"
+            "порог: 100000\n"
+            "порог превышен: нет\n"
+            "git: ok, репозиториев: 1, коммитов: 1\n"
+            "transcripts: недоступен, сессий: 0\n"
+            "opencode: выключен, сессий: 0\n"
+            "telegram: выключен, чатов: 0, unlisted: 0\n"
         ),
     )
 
@@ -609,6 +735,11 @@ def _isolate_home(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
 
 def _freeze(monkeypatch: pytest.MonkeyPatch, moment: datetime) -> None:
     monkeypatch.setattr("app.summary.collect.local_now", lambda _timezone: moment)
+
+
+def _stored(root: Path, day: str, source: str) -> Any:  # noqa: ANN401
+    path = root / "state" / "raw" / day / f"{source}.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _config_file(

@@ -12,10 +12,16 @@ from pathlib import Path
 from app.collectors.telegram.chats import load_chats
 from app.collectors.telegram.init import run_init
 from app.config import Config, load_config
-from app.errors import ErrorCode, SummaryError
+from app.errors import SummaryError
 from app.notes.writer import write_note
-from app.summary.collect import RELATIVE_DAYS, collect_and_store, local_now, resolve_day
-from app.summary.models import RawDump, SourceStatus
+from app.summary.collect import (
+    RELATIVE_DAYS,
+    CollectedDay,
+    collect_and_store,
+    local_now,
+    resolve_day,
+)
+from app.summary.models import GitDump, SessionDump, SourceStatus, TelegramDump
 
 DISTRIBUTION = "daily-summary"
 _NOT_KEPT = "дамп не сохранён: дата старше ретенции"
@@ -119,8 +125,8 @@ def _dispatch(args: argparse.Namespace) -> int:
 
 
 def _run_collect(config: Config, token: str | None) -> int:
-    path, dump = collect_and_store(config, token, progress=_progress)
-    sys.stdout.write(_report(path, dump))
+    day = collect_and_store(config, token, progress=_progress)
+    sys.stdout.write(_report(day, threshold=config.summary.two_stage_threshold_bytes))
     return 0
 
 
@@ -169,44 +175,58 @@ def _run_chats(config: Config) -> int:
     return 0
 
 
-def _report(path: Path | None, dump: RawDump) -> str:
-    repos = len(dump.sources.git.repos)
-    stats = dump.stats
+_STATUS = {
+    SourceStatus.OK: "ok",
+    SourceStatus.EMPTY: "пустой",
+    SourceStatus.DISABLED: "выключен",
+    SourceStatus.UNAVAILABLE: "недоступен",
+}
+
+
+def _report(day: CollectedDay, *, threshold: int) -> str:
     lines = [
-        str(path) if path is not None else _NOT_KEPT,
-        (
-            f"репозиториев: {repos}, коммитов: {stats.commits}, "
-            f"сессий: {stats.sessions}, сообщений: {stats.messages}, байт: {stats.bytes}"
-        ),
+        str(day.directory) if day.directory is not None else _NOT_KEPT,
+        f"дата: {day.git.date.isoformat()}",
+        f"байты: {day.total_bytes}",
+        f"порог: {threshold}",
+        f"порог превышен: {_exceeded(day.total_bytes, threshold)}",
+        _git_line(day.git),
+        _session_line("transcripts", day.transcripts),
+        _session_line("opencode", day.opencode),
+        _telegram_line(day.telegram),
+        *_notes(day),
     ]
-    skipped = _unavailable(dump)
-    if skipped:
-        lines.append("недоступно: " + "; ".join(skipped))
     return "\n".join(lines) + "\n"
 
 
-def _unavailable(dump: RawDump) -> list[str]:
-    named = (
-        ("git", dump.sources.git),
-        ("transcripts", dump.sources.transcripts),
-        ("opencode", dump.sources.opencode),
-        ("telegram", dump.sources.telegram),
-    )
+def _exceeded(total: int, threshold: int) -> str:
+    if total > threshold:
+        return "да"
+    return "нет"
+
+
+def _git_line(dump: GitDump) -> str:
+    commits = sum(len(repo.commits) for repo in dump.repos)
+    status = _STATUS[dump.status]
+    return f"git: {status}, репозиториев: {len(dump.repos)}, коммитов: {commits}"
+
+
+def _session_line(name: str, dump: SessionDump) -> str:
+    return f"{name}: {_STATUS[dump.status]}, сессий: {len(dump.sessions)}"
+
+
+def _telegram_line(dump: TelegramDump) -> str:
+    status = _STATUS[dump.status]
+    return f"telegram: {status}, чатов: {len(dump.chats)}, unlisted: {dump.unlisted_active}"
+
+
+def _notes(day: CollectedDay) -> list[str]:
     return [
-        _unavailable_item(name, source.reason, source.code)
-        for name, source in named
-        if source.status == SourceStatus.UNAVAILABLE
+        *day.git.truncations,
+        *day.transcripts.truncations,
+        *day.opencode.truncations,
+        *day.telegram.truncations,
     ]
-
-
-def _unavailable_item(name: str, reason: str | None, code: ErrorCode | None) -> str:
-    if code is not None and reason:
-        return f"{name} — {code}: {reason}"
-    if reason:
-        return f"{name} — {reason}"
-    if code is not None:
-        return f"{name} — {code}"
-    return f"{name} — недоступен"
 
 
 def _print_error(error: SummaryError) -> None:

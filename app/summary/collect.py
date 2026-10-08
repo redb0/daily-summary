@@ -1,8 +1,10 @@
-"""Сборка сырого дампа: окно дня, источники, маскирование и файл вне vault."""
+"""Сборка сырых дампов: окно дня, источники, маскирование и каталог вне vault."""
 
+import shutil
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from app.atomic import replace_text
@@ -14,15 +16,12 @@ from app.config import Config
 from app.errors import ErrorCode, SummaryError
 from app.summary.masking import mask_secrets
 from app.summary.models import (
-    GitSource,
-    RawDump,
-    Sources,
+    GitDump,
+    SessionDump,
     SourceStatus,
-    Stats,
-    TelegramSource,
-    TranscriptsSource,
+    TelegramDump,
     Window,
-    render_raw_dump,
+    render_dump,
 )
 
 _TODAY = "today"
@@ -42,17 +41,44 @@ def local_now(timezone_name: str) -> datetime:
     return datetime.now(ZoneInfo(timezone_name))
 
 
+class CollectedDay(NamedTuple):
+    """Четыре дампа полного сбора и каталог, если ретенция его оставила."""
+
+    directory: Path | None
+    total_bytes: int
+    git: GitDump
+    transcripts: SessionDump
+    opencode: SessionDump
+    telegram: TelegramDump
+
+
+class _Dumps(NamedTuple):
+    git: GitDump
+    transcripts: SessionDump
+    opencode: SessionDump
+    telegram: TelegramDump
+
+
+class _When(NamedTuple):
+    """Дата, окно и момент одного прохода сбора. У каждого дампа копия этих полей."""
+
+    day: date
+    window: Window
+    generated_at: datetime
+
+
 def collect_and_store(
     config: Config,
     day_text: str | None,
     *,
     progress: Callable[[str], None] | None = None,
-) -> tuple[Path | None, RawDump]:
-    """Собрать день и записать JSON.
+) -> CollectedDay:
+    """Собрать день и записать четыре дампа в каталог.
 
-    Каталог дампов создаётся с правами 700, файл — 600. После записи удаляются
-    дампы старше `state.raw_retention_days` относительно сегодняшнего дня,
-    включая только что записанный, если его дата тоже старше окна.
+    Каталоги создаются с правами 700, файлы — 600. После записи удаляются
+    каталоги дней и одиночные JSON старше `state.raw_retention_days`
+    относительно сегодняшнего дня, включая только что записанный день, если
+    его дата тоже старше окна. Содержимое при удалении не читается.
     `progress` получает ход Telegram, пока обходятся чаты и диалоги.
 
     Args:
@@ -62,16 +88,14 @@ def collect_and_store(
         progress: Куда писать ход Telegram. `None` — молчать.
 
     Returns:
-        Путь к файлу, если он остался после ретенции, и дамп. `stats.bytes`
-        равен длине JSON.
+        Каталог дня, если он остался после ретенции, сумма размеров файлов
+        и четыре дампа. У каждого дампа своё окно и свой `bytes`.
     """
     now = local_now(config.notes.timezone)
     day, window = _resolve_window(day_text, now=now)
-    dump = _with_size(
-        _mask_dump(_assemble(config, day, window, generated_at=now, progress=progress)),
-    )
-    path = _store(config, day, render_raw_dump(dump), today=now.date())
-    return path, dump
+    dumps = _assemble(config, day, window, generated_at=now, progress=progress)
+    directory, total_bytes = _store(config, day, dumps, today=now.date())
+    return CollectedDay(directory, total_bytes, *dumps)
 
 
 def _resolve_window(day_text: str | None, *, now: datetime) -> tuple[date, Window]:
@@ -115,112 +139,102 @@ def _assemble(
     *,
     generated_at: datetime,
     progress: Callable[[str], None] | None,
-) -> RawDump:
-    sources, truncations = _sources(
-        config,
-        window,
-        progress=progress,
-        include_uncommitted=_include_uncommitted(day, generated_at=generated_at),
-    )
-    return RawDump(
-        schema_version=1,
-        date=day,
-        window=window,
-        generated_at=generated_at,
-        sources=sources,
-        stats=_stats(sources),
-        truncations=truncations,
+) -> _Dumps:
+    when = _When(day, window, generated_at)
+    include_uncommitted = _include_uncommitted(day, generated_at=generated_at)
+    return _Dumps(
+        _with_size(_mask_model(_git_dump(config, when, include_uncommitted=include_uncommitted))),
+        _with_size(_mask_model(_transcript_dump(config, when))),
+        _with_size(_mask_model(_opencode_dump(config, when))),
+        _with_size(_mask_model(_telegram_dump(config, when, progress=progress))),
     )
 
 
-def _sources(
-    config: Config,
-    window: Window,
-    *,
-    progress: Callable[[str], None] | None,
-    include_uncommitted: bool,
-) -> tuple[Sources, list[str]]:
-    git, git_notes = _git_source(config, window, include_uncommitted=include_uncommitted)
-    transcripts, transcript_notes = _transcript_source(config, window)
-    opencode, opencode_notes = _opencode_source(config, window)
-    telegram, telegram_notes = _telegram_source(config, window, progress=progress)
-    sources = Sources(git=git, transcripts=transcripts, opencode=opencode, telegram=telegram)
-    return sources, [*git_notes, *transcript_notes, *opencode_notes, *telegram_notes]
-
-
-def _git_source(
-    config: Config,
-    window: Window,
-    *,
-    include_uncommitted: bool,
-) -> tuple[GitSource, list[str]]:
+def _git_dump(config: Config, when: _When, *, include_uncommitted: bool) -> GitDump:
     try:
-        collected = collect_git(config, window, include_uncommitted=include_uncommitted)
+        collected = collect_git(config, when.window, include_uncommitted=include_uncommitted)
     except (OSError, SummaryError) as exc:
-        return _mark_unavailable(GitSource, exc), []
+        return _failed(GitDump, exc, when)
     if not collected.repos:
-        return GitSource(status=SourceStatus.EMPTY), []
-    return GitSource(status=SourceStatus.OK, repos=collected.repos), list(collected.truncations)
-
-
-def _transcript_source(config: Config, window: Window) -> tuple[TranscriptsSource, list[str]]:
-    try:
-        collected = collect_transcripts(config, window)
-    except (OSError, SummaryError) as exc:
-        return _mark_unavailable(TranscriptsSource, exc), []
-    if not collected.sessions:
-        return TranscriptsSource(status=SourceStatus.EMPTY), []
-    return (
-        TranscriptsSource(status=SourceStatus.OK, sessions=collected.sessions),
-        list(collected.truncations),
+        return _status_dump(GitDump, when, status=SourceStatus.EMPTY)
+    return _status_dump(GitDump, when, status=SourceStatus.OK).model_copy(
+        update={"repos": collected.repos, "truncations": list(collected.truncations)},
     )
 
 
-def _opencode_source(config: Config, window: Window) -> tuple[TranscriptsSource, list[str]]:
+def _transcript_dump(config: Config, when: _When) -> SessionDump:
+    try:
+        collected = collect_transcripts(config, when.window)
+    except (OSError, SummaryError) as exc:
+        return _failed(SessionDump, exc, when)
+    if not collected.sessions:
+        return _status_dump(SessionDump, when, status=SourceStatus.EMPTY)
+    return _status_dump(SessionDump, when, status=SourceStatus.OK).model_copy(
+        update={"sessions": collected.sessions, "truncations": list(collected.truncations)},
+    )
+
+
+def _opencode_dump(config: Config, when: _When) -> SessionDump:
     if not config.opencode.enabled:
-        return TranscriptsSource(status=SourceStatus.DISABLED), []
+        return _status_dump(SessionDump, when, status=SourceStatus.DISABLED)
     try:
-        collected = collect_opencode(config, window)
+        collected = collect_opencode(config, when.window)
     except (OSError, SummaryError) as exc:
-        return _mark_unavailable(TranscriptsSource, exc), []
-    if not collected.sessions:
-        return TranscriptsSource(status=SourceStatus.EMPTY), list(collected.truncations)
-    return (
-        TranscriptsSource(status=SourceStatus.OK, sessions=collected.sessions),
-        list(collected.truncations),
+        return _failed(SessionDump, exc, when)
+    status = SourceStatus.OK if collected.sessions else SourceStatus.EMPTY
+    return _status_dump(SessionDump, when, status=status).model_copy(
+        update={"sessions": collected.sessions, "truncations": list(collected.truncations)},
     )
 
 
-def _telegram_source(
+def _telegram_dump(
     config: Config,
-    window: Window,
+    when: _When,
     *,
     progress: Callable[[str], None] | None,
-) -> tuple[TelegramSource, list[str]]:
+) -> TelegramDump:
     if not config.telegram.enabled:
-        return TelegramSource(status=SourceStatus.DISABLED), []
+        return _status_dump(TelegramDump, when, status=SourceStatus.DISABLED)
     try:
-        collected = collect_telegram(config, window, progress=progress)
+        collected = collect_telegram(config, when.window, progress=progress)
     except (OSError, SummaryError) as exc:
-        return _mark_unavailable(TelegramSource, exc), []
+        return _failed(TelegramDump, exc, when)
     if not collected.chats and collected.unlisted_active == 0:
-        return TelegramSource(status=SourceStatus.EMPTY), list(collected.truncations)
-    return (
-        TelegramSource(
-            status=SourceStatus.OK,
-            chats=collected.chats,
-            unlisted_active=collected.unlisted_active,
-        ),
-        list(collected.truncations),
+        return _status_dump(TelegramDump, when, status=SourceStatus.EMPTY).model_copy(
+            update={"truncations": list(collected.truncations)},
+        )
+    return _status_dump(TelegramDump, when, status=SourceStatus.OK).model_copy(
+        update={
+            "chats": collected.chats,
+            "unlisted_active": collected.unlisted_active,
+            "truncations": list(collected.truncations),
+        },
     )
 
 
-def _mark_unavailable[S: (GitSource, TranscriptsSource, TelegramSource)](
-    kind: type[S],
+def _status_dump[D: (GitDump, SessionDump, TelegramDump)](
+    kind: type[D],
+    when: _When,
+    *,
+    status: SourceStatus,
+) -> D:
+    return kind(
+        date=when.day,
+        window=when.window,
+        generated_at=when.generated_at,
+        status=status,
+    )
+
+
+def _failed[D: (GitDump, SessionDump, TelegramDump)](
+    kind: type[D],
     exc: Exception,
-) -> S:
+    when: _When,
+) -> D:
     code, reason = _error_parts(exc)
-    return kind(status=SourceStatus.UNAVAILABLE, code=code, reason=reason)
+    return _status_dump(kind, when, status=SourceStatus.UNAVAILABLE).model_copy(
+        update={"code": code, "reason": reason},
+    )
 
 
 def _error_parts(exc: Exception) -> tuple[ErrorCode | None, str]:
@@ -232,17 +246,9 @@ def _error_parts(exc: Exception) -> tuple[ErrorCode | None, str]:
     return None, reason
 
 
-def _stats(sources: Sources) -> Stats:
-    commits = sum(len(repo.commits) for repo in sources.git.repos)
-    sessions = [*sources.transcripts.sessions, *sources.opencode.sessions]
-    messages = sum(len(session.messages) for session in sessions)
-    messages += sum(len(chat.messages) for chat in sources.telegram.chats)
-    return Stats(commits=commits, messages=messages, sessions=len(sessions), bytes=0)
-
-
-def _mask_dump(dump: RawDump) -> RawDump:
+def _mask_model[D: (GitDump, SessionDump, TelegramDump)](dump: D) -> D:
     payload = dump.model_dump(mode="json", by_alias=True, exclude_none=True)
-    return RawDump.model_validate(_mask_value(payload))
+    return type(dump).model_validate(_mask_value(payload))
 
 
 def _mask_value(value: object) -> object:
@@ -255,30 +261,45 @@ def _mask_value(value: object) -> object:
     return value
 
 
-def _with_size(dump: RawDump) -> RawDump:
-    placeholder = dump.model_copy(update={"stats": dump.stats.model_copy(update={"bytes": 0})})
+def _with_size[D: (GitDump, SessionDump, TelegramDump)](dump: D) -> D:
+    placeholder = dump.model_copy(update={"bytes": 0})
     # В заготовке `bytes` равен 0 — одна цифра. Длина файла с настоящим числом
     # больше на ширину этого числа минус эта цифра.
-    base_length = len(render_raw_dump(placeholder).encode()) - 1
+    base_length = len(render_dump(placeholder).encode()) - 1
     width = len(str(base_length))
     size = base_length + width
     while len(str(size)) != width:
         width = len(str(size))
         size = base_length + width
-    return dump.model_copy(update={"stats": dump.stats.model_copy(update={"bytes": size})})
+    return dump.model_copy(update={"bytes": size})
 
 
-def _store(config: Config, day: date, text: str, *, today: date) -> Path | None:
+def _store(
+    config: Config,
+    day: date,
+    dumps: _Dumps,
+    *,
+    today: date,
+) -> tuple[Path | None, int]:
     state_dir = config.state.dir
     _private_dir(state_dir)
     raw_dir = state_dir / "raw"
     _private_dir(raw_dir)
-    path = raw_dir / f"{day.isoformat()}.json"
-    _write_private(path, text)
+    day_dir = raw_dir / day.isoformat()
+    _private_dir(day_dir)
+    written = (
+        ("git", dumps.git),
+        ("transcripts", dumps.transcripts),
+        ("opencode", dumps.opencode),
+        ("telegram", dumps.telegram),
+    )
+    for name, dump in written:
+        _write_private(day_dir / f"{name}.json", render_dump(dump))
+    total = sum((day_dir / f"{name}.json").stat().st_size for name, _dump in written)
     _purge(raw_dir, today=today, retention_days=config.state.raw_retention_days)
-    if path.is_file():
-        return path
-    return None
+    if day_dir.is_dir():
+        return day_dir, total
+    return None, total
 
 
 def _private_dir(path: Path) -> None:
@@ -292,10 +313,17 @@ def _write_private(path: Path, text: str) -> None:
 
 def _purge(raw_dir: Path, *, today: date, retention_days: int) -> None:
     cutoff = today - timedelta(days=retention_days)
-    for path in raw_dir.glob("*.json"):
+    for path in list(raw_dir.iterdir()):
         dumped = _dump_date(path)
         if dumped is not None and dumped < cutoff:
-            path.unlink()
+            _remove(path)
+
+
+def _remove(path: Path) -> None:
+    if path.is_dir():
+        shutil.rmtree(path)
+        return
+    path.unlink()
 
 
 def _dump_date(path: Path) -> date | None:
