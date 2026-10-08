@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 import tomllib
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,6 +16,10 @@ from app.cli import main
 
 _MOSCOW = ZoneInfo("Europe/Moscow")
 _AUTHOR = "vvoronov@mwnts.ru"
+_UNCOMMITTED = {
+    "files": ["note.txt"],
+    "diffstat": " note.txt | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)",
+}
 _SECRET_ENV = ("TG_API_ID", "TG_API_HASH", "TG_PHONE")
 
 
@@ -164,6 +168,114 @@ def test_collect_default_window_stops_at_now_and_date_today_covers_the_day(
         "2026-10-05T23:59:59.999999+03:00",
         ["утром", "вечером"],
         str(tmp_path / "state" / "raw" / "2026-10-05.json"),
+    )
+
+
+def test_collect_without_date_keeps_uncommitted_after_the_window_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    captured = datetime(2026, 10, 5, 15, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, captured)
+    monkeypatch.setattr(
+        "app.collectors.git._now",
+        lambda _zone: captured + timedelta(minutes=1),
+    )
+    repo = tmp_path / "repos" / "demo"
+    _commit(repo, "утром", captured.replace(hour=9))
+    (repo / "note.txt").write_text("ещё правка\n", encoding="utf-8")
+    config = _config_file(tmp_path)
+
+    exit_code = main(["collect", "--config", str(config)])
+
+    payload = json.loads(
+        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
+    )
+    assert (
+        exit_code,
+        payload["window"]["to"],
+        payload["sources"]["git"]["repos"][0].get("dirty"),
+    ) == (
+        0,
+        "2026-10-05T15:00:00+03:00",
+        _UNCOMMITTED,
+    )
+
+
+def test_collect_named_past_day_omits_uncommitted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    today = datetime(2026, 10, 6, 12, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, today)
+    # Часы проверки внутри прошедшего дня: решение сбора всё равно их не включает.
+    monkeypatch.setattr(
+        "app.collectors.git._now",
+        lambda _zone: datetime(2026, 10, 5, 18, 0, tzinfo=_MOSCOW),
+    )
+    repo = tmp_path / "repos" / "demo"
+    _commit(repo, "вчера", datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW))
+    (repo / "note.txt").write_text("сегодняшняя правка\n", encoding="utf-8")
+    config = _config_file(tmp_path)
+
+    exit_code = main(["collect", "--date", "2026-10-05", "--config", str(config)])
+
+    payload = json.loads(
+        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
+    )
+    repo_dump = payload["sources"]["git"]["repos"][0]
+    assert (
+        exit_code,
+        payload["window"]["to"],
+        [commit["message"] for commit in repo_dump["commits"]],
+        repo_dump.get("dirty"),
+    ) == (
+        0,
+        "2026-10-05T23:59:59.999999+03:00",
+        ["вчера"],
+        None,
+    )
+
+
+def test_collect_today_covers_the_day_and_keeps_uncommitted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    captured = datetime(2026, 10, 5, 15, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, captured)
+    # Конец суток уже позади: незакоммиченное держится решением на старте, не часами.
+    monkeypatch.setattr(
+        "app.collectors.git._now",
+        lambda _zone: datetime(2026, 10, 6, 0, 1, tzinfo=_MOSCOW),
+    )
+    repo = tmp_path / "repos" / "demo"
+    _commit(repo, "утром", captured.replace(hour=9))
+    _commit(repo, "вечером", captured.replace(hour=16))
+    (repo / "note.txt").write_text("ещё правка\n", encoding="utf-8")
+    config = _config_file(tmp_path)
+
+    exit_code = main(["collect", "--date", "today", "--config", str(config)])
+
+    payload = json.loads(
+        (tmp_path / "state" / "raw" / "2026-10-05.json").read_text(encoding="utf-8"),
+    )
+    repo_dump = payload["sources"]["git"]["repos"][0]
+    assert (
+        exit_code,
+        payload["window"]["to"],
+        [commit["message"] for commit in repo_dump["commits"]],
+        repo_dump.get("dirty"),
+    ) == (
+        0,
+        "2026-10-05T23:59:59.999999+03:00",
+        ["утром", "вечером"],
+        _UNCOMMITTED,
     )
 
 

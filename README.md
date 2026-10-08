@@ -71,8 +71,10 @@ cp config.example.toml ~/.config/daily-summary/config.toml
 (`Europe/Moscow`).
 
 `[git]` — `roots` и `max_depth` задают обход репозиториев, `authors` — чьи
-коммиты брать. `include_dirty` добавляет незакоммиченное только в окно,
-которое содержит текущий момент. `exclude_globs` и три `max_diff_lines_*`
+коммиты брать. `include_dirty` добавляет незакоммиченное в сбор без даты
+и в сегодняшний календарный день; конец уже захваченного окна «до сейчас»
+эти файлы не отсекает. Названный прошедший день их не включает.
+`exclude_globs` и три `max_diff_lines_*`
 отсекают шум и длинные diff.
 
 `[transcripts]` — корни JSONL Cursor (`~/.cursor/projects`) и сколько реплик

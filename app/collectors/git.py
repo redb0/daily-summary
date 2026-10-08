@@ -44,17 +44,26 @@ class CollectedGit(BaseModel):
     truncations: list[str]
 
 
-def collect_git(config: Config, window: Window) -> CollectedGit:
+def collect_git(
+    config: Config,
+    window: Window,
+    *,
+    include_uncommitted: bool | None = None,
+) -> CollectedGit:
     """Собрать коммиты авторов из конфига и незакоммиченные изменения.
 
     Время коммита переводится в `notes.timezone`, чтобы граница дня совпала
-    с заметкой. Незакоммиченное попадает только в окно, которое содержит
-    текущий момент. Битый репозиторий без таких правок пропускается.
-    Усечения — человекочитаемые строки, не признак пропуска репозитория.
+    с заметкой. Незакоммиченное берётся, когда `include_uncommitted` истинно:
+    команда решает это в момент захвата окна. `None` оставляет прежнюю
+    проверку по текущим часам — для прямого вызова сборщика. Битый репозиторий
+    без таких правок пропускается. Усечения — человекочитаемые строки, не
+    признак пропуска репозитория.
 
     Args:
         config: Загруженные настройки. Лимиты и корни берутся отсюда.
         window: Закрытый интервал сбора.
+        include_uncommitted: Включать незакоммиченные файлы. `None` — если окно
+            содержит текущий момент.
 
     Returns:
         Репозитории, где нашлась работа, и записи об усечении diff.
@@ -63,7 +72,13 @@ def collect_git(config: Config, window: Window) -> CollectedGit:
     repos: list[GitRepo] = []
     truncations: list[str] = []
     for path in _discover(config.git.roots, config.git.max_depth):
-        collected = _collect_repo(path, config, window, zone=zone)
+        collected = _collect_repo(
+            path,
+            config,
+            window,
+            zone=zone,
+            include_uncommitted=include_uncommitted,
+        )
         if collected is None:
             continue
         repo, repo_truncations = collected
@@ -170,9 +185,16 @@ def _collect_repo(
     window: Window,
     *,
     zone: ZoneInfo,
+    include_uncommitted: bool | None,
 ) -> tuple[GitRepo, list[str]] | None:
     records = _commits_in_window(path, window)
-    dirty = _dirty(path, config, window, zone=zone)
+    dirty = _dirty(
+        path,
+        config,
+        window,
+        zone=zone,
+        include_uncommitted=include_uncommitted,
+    )
     if records is None:
         if dirty is None:
             return None
@@ -183,8 +205,17 @@ def _collect_repo(
     return GitRepo(path=str(path), commits=commits, dirty=dirty), notes
 
 
-def _dirty(path: Path, config: Config, window: Window, *, zone: ZoneInfo) -> GitDirty | None:
-    if not config.git.include_dirty or not _covers_now(window, zone):
+def _dirty(
+    path: Path,
+    config: Config,
+    window: Window,
+    *,
+    zone: ZoneInfo,
+    include_uncommitted: bool | None,
+) -> GitDirty | None:
+    if include_uncommitted is None:
+        include_uncommitted = _covers_now(window, zone)
+    if not config.git.include_dirty or not include_uncommitted:
         return None
     return _read_dirty(path)
 

@@ -99,6 +99,15 @@ def resolve_day(day_text: str | None, *, today: date) -> date:
     return date.fromisoformat(day_text)
 
 
+def _include_uncommitted(day: date, *, generated_at: datetime) -> bool:
+    """Включать ли незакоммиченные файлы в этот сбор.
+
+    Да — запуск без даты и сегодняшний календарный день. Решение принимается
+    вместе с окном: часы, ушедшие вперёд при обходе репозиториев, его не меняют.
+    """
+    return day == generated_at.date()
+
+
 def _assemble(
     config: Config,
     day: date,
@@ -107,7 +116,12 @@ def _assemble(
     generated_at: datetime,
     progress: Callable[[str], None] | None,
 ) -> RawDump:
-    sources, truncations = _sources(config, window, progress=progress)
+    sources, truncations = _sources(
+        config,
+        window,
+        progress=progress,
+        include_uncommitted=_include_uncommitted(day, generated_at=generated_at),
+    )
     return RawDump(
         schema_version=1,
         date=day,
@@ -124,8 +138,9 @@ def _sources(
     window: Window,
     *,
     progress: Callable[[str], None] | None,
+    include_uncommitted: bool,
 ) -> tuple[Sources, list[str]]:
-    git, git_notes = _git_source(config, window)
+    git, git_notes = _git_source(config, window, include_uncommitted=include_uncommitted)
     transcripts, transcript_notes = _transcript_source(config, window)
     opencode, opencode_notes = _opencode_source(config, window)
     telegram, telegram_notes = _telegram_source(config, window, progress=progress)
@@ -133,9 +148,14 @@ def _sources(
     return sources, [*git_notes, *transcript_notes, *opencode_notes, *telegram_notes]
 
 
-def _git_source(config: Config, window: Window) -> tuple[GitSource, list[str]]:
+def _git_source(
+    config: Config,
+    window: Window,
+    *,
+    include_uncommitted: bool,
+) -> tuple[GitSource, list[str]]:
     try:
-        collected = collect_git(config, window)
+        collected = collect_git(config, window, include_uncommitted=include_uncommitted)
     except (OSError, SummaryError) as exc:
         return _mark_unavailable(GitSource, exc), []
     if not collected.repos:
