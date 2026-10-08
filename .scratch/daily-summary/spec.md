@@ -22,7 +22,7 @@ performance review и база решений, по которой можно и
 
 В ней:
 
-- CLI `daily-summary` с подкомандами `init`, `chats`, `collect`, `write`;
+- CLI `daily-summary` с подкомандами `init`, `chats`, `collect`, `show`, `write`;
 - три сборщика: git, транскрипты Cursor, Telegram;
 - скилл `~/.agents/skills/daily-summary/SKILL.md` — интерактивный шаг с
   уточняющими вопросами и записью блока в заметку.
@@ -38,7 +38,7 @@ performance review и база решений, по которой можно и
 
 ```text
 app/
-├── cli.py              # argparse: init, chats, collect, write
+├── cli.py              # argparse: init, chats, collect, show, write
 ├── config.py           # pydantic-settings, чтение config.toml + .env
 ├── errors.py           # SummaryError(message, hint, code)
 ├── collectors/
@@ -58,10 +58,14 @@ SMS на stdin и зависнет внутри вызова инструмен�
 ## Поток работы
 
 1. `daily-summary collect [--date YYYY-MM-DD]` собирает окно «локальные 00:00 →
-   момент запуска» (или указанный день целиком) в
-   `~/.local/state/daily-summary/raw/YYYY-MM-DD.json`, права 600. В stdout —
-   путь к дампу и сводка объёма.
-2. Скилл читает дамп, формирует черновик блока, задаёт уточняющие вопросы
+   момент запуска» (или указанный день целиком) в каталог
+   `~/.local/state/daily-summary/raw/YYYY-MM-DD/` с дампами `git.json`,
+   `transcripts.json`, `opencode.json` и `telegram.json`. Один файл
+   `YYYY-MM-DD.json` на день не пишется и не читается: раскладка —
+   [ADR-0006](../../docs/adr/0006-dump-per-source.md). Права файла 600,
+   каталогов 700. В stdout — путь к каталогу дня и сводка. Тело источника
+   печатает `daily-summary show`.
+2. Скилл по сводке формирует черновик блока, задаёт уточняющие вопросы
    («что именно решили в этом треде и почему») и показывает результат в чате.
 3. После явного подтверждения — `daily-summary write --date ... --body -
    --apply`. **Без `--apply` на диске не меняется ничего.**
