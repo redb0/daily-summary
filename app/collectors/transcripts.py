@@ -82,7 +82,7 @@ def _discover(roots: list[Path]) -> list[Path]:
             for path in root.glob("*/agent-transcripts/*/*.jsonl")
             if path.parent.name == path.stem
         )
-    return sorted(found)
+    return sorted(found, key=lambda path: (path.stat().st_mtime_ns, path.as_posix()))
 
 
 def _in_window(path: Path, window: Window) -> bool:

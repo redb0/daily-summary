@@ -20,10 +20,12 @@ from app.summary.collect import (
     CollectedDay,
     SourceName,
     collect_and_store,
+    load_stored_day,
     local_now,
     resolve_day,
 )
 from app.summary.models import GitDump, SessionDump, SourceStatus, TelegramDump
+from app.summary.show import render_git, render_sessions, render_telegram
 
 DISTRIBUTION = "daily-summary"
 _NOT_KEPT = "дамп не сохранён: дата старше ретенции"
@@ -49,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("source", nargs="?", choices=SOURCES, default=None)
     collect.add_argument("--date", type=_day_token, default=None)
     collect.add_argument("--config", type=Path, default=None)
+    show = commands.add_parser("show", help="Показать сводку или тело источника.")
+    show.add_argument("source", nargs="?", choices=SOURCES, default=None)
+    show.add_argument("--date", type=_day_token, default=None)
+    show.add_argument("--config", type=Path, default=None)
     write = commands.add_parser("write", help="Записать блок итогов в ежедневную заметку.")
     write.add_argument("--date", type=_iso_day, required=True)
     write.add_argument("--body", type=_stdin_body, required=True)
@@ -120,6 +126,8 @@ def _dispatch(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     if args.command == "collect":
         return _run_collect(config, args.date, args.source)
+    if args.command == "show":
+        return _run_show(config, args.date, args.source)
     if args.command == "write":
         return _run_write(config, args.date, apply=args.apply)
     if args.command == "init":
@@ -131,6 +139,53 @@ def _run_collect(config: Config, token: str | None, source: SourceName | None) -
     day = collect_and_store(config, token, progress=_progress, source=source)
     sys.stdout.write(_report(day, threshold=config.summary.two_stage_threshold_bytes))
     return 0
+
+
+def _run_show(config: Config, token: str | None, source: SourceName | None) -> int:
+    day_date, stored = load_stored_day(config, token)
+    if source is None:
+        sys.stdout.write(
+            _report(
+                stored,
+                threshold=config.summary.two_stage_threshold_bytes,
+                empty_date=day_date,
+            ),
+        )
+        return 0
+    sys.stdout.write(_source_text(source, stored))
+    return 0
+
+
+def _source_text(source: SourceName, day: CollectedDay) -> str:
+    missing = _missing_text(source, day)
+    if missing is not None:
+        return missing
+    return _body(source, day)
+
+
+def _missing_text(source: SourceName, day: CollectedDay) -> str | None:
+    if source == "git" and day.git is None:
+        return _git_line(None) + "\n"
+    if source == "transcripts" and day.transcripts is None:
+        return _session_line("transcripts", None) + "\n"
+    if source == "opencode" and day.opencode is None:
+        return _session_line("opencode", None) + "\n"
+    if source == "telegram" and day.telegram is None:
+        return _telegram_line(None) + "\n"
+    return None
+
+
+def _body(source: SourceName, day: CollectedDay) -> str:
+    if source == "git" and day.git is not None:
+        return render_git(day.git)
+    if source == "transcripts" and day.transcripts is not None:
+        return render_sessions(day.transcripts)
+    if source == "opencode" and day.opencode is not None:
+        return render_sessions(day.opencode)
+    if source == "telegram" and day.telegram is not None:
+        return render_telegram(day.telegram)
+    message = "в дне нет дампа источника"
+    raise RuntimeError(message)
 
 
 def _progress(line: str) -> None:
@@ -186,28 +241,63 @@ _STATUS = {
 }
 
 
-def _report(day: CollectedDay, *, threshold: int) -> str:
+def _report(
+    day: CollectedDay,
+    *,
+    threshold: int,
+    empty_date: date | None = None,
+) -> str:
+    shown = _day_date(day, empty_date)
+    shared = _same_window(day)
     lines = [
-        str(day.directory) if day.directory is not None else _NOT_KEPT,
-        f"дата: {_day_date(day).isoformat()}",
+        *_heading(day),
+        f"дата: {shown.isoformat()}",
         f"байты: {day.total_bytes}",
         f"порог: {threshold}",
         f"порог превышен: {_exceeded(day.total_bytes, threshold)}",
-        _git_line(day.git),
-        _session_line("transcripts", day.transcripts),
-        _session_line("opencode", day.opencode),
-        _telegram_line(day.telegram),
+        _git_line(day.git) + _window_suffix(day.git, shared=shared),
+        _session_line("transcripts", day.transcripts)
+        + _window_suffix(day.transcripts, shared=shared),
+        _session_line("opencode", day.opencode) + _window_suffix(day.opencode, shared=shared),
+        _telegram_line(day.telegram) + _window_suffix(day.telegram, shared=shared),
         *_notes(day),
     ]
     return "\n".join(lines) + "\n"
 
 
-def _day_date(day: CollectedDay) -> date:
+def _same_window(day: CollectedDay) -> bool:
+    windows = [
+        dump.window
+        for dump in (day.git, day.transcripts, day.opencode, day.telegram)
+        if dump is not None
+    ]
+    return all(item == windows[0] for item in windows)
+
+
+def _window_suffix(dump: GitDump | SessionDump | TelegramDump | None, *, shared: bool) -> str:
+    if shared or dump is None:
+        return ""
+    start = dump.window.from_.isoformat()
+    end = dump.window.to.isoformat()
+    return f", окно: {start}..{end}"
+
+
+def _heading(day: CollectedDay) -> list[str]:
+    if day.directory is not None:
+        return [str(day.directory)]
+    if day.git or day.transcripts or day.opencode or day.telegram:
+        return [_NOT_KEPT]
+    return []
+
+
+def _day_date(day: CollectedDay, fallback: date | None) -> date:
     dump = day.git or day.transcripts or day.opencode or day.telegram
-    if dump is None:
-        message = "в дне нет ни одного дампа"
-        raise RuntimeError(message)
-    return dump.date
+    if dump is not None:
+        return dump.date
+    if fallback is not None:
+        return fallback
+    message = "в дне нет ни одного дампа"
+    raise RuntimeError(message)
 
 
 def _exceeded(total: int, threshold: int) -> str:

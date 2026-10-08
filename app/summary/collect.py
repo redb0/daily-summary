@@ -68,6 +68,30 @@ class _When(NamedTuple):
     generated_at: datetime
 
 
+def load_stored_day(config: Config, day_text: str | None) -> tuple[date, CollectedDay]:
+    """Прочитать уже записанный день, ничего не собирая и не удаляя.
+
+    Нет каталога — все четыре источника несобранные, байты нулевые.
+    Одиночный JSON прошлого формата не читается.
+
+    Args:
+        config: Загруженные настройки. Пояс заметок и каталог состояния
+            берутся отсюда.
+        day_text: `None` — сегодня в поясе заметок. `today`, `yesterday`
+            или `YYYY-MM-DD` — как у сбора.
+
+    Returns:
+        Календарный день и дампы каталога. Каталога нет — `directory` равен
+        `None`, поля источников пустые.
+    """
+    today = local_now(config.notes.timezone).date()
+    day = resolve_day(day_text, today=today)
+    day_dir = config.state.dir / "raw" / day.isoformat()
+    if not day_dir.is_dir():
+        return day, CollectedDay(None, 0, None, None, None, None)
+    return day, CollectedDay(day_dir, _total_bytes(day_dir), *_load(day_dir))
+
+
 def collect_and_store(
     config: Config,
     day_text: str | None,

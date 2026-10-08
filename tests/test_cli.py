@@ -160,6 +160,21 @@ def test_collect_one_source_again_replaces_only_its_window(
     git_payload = json.loads(git_path.read_text(encoding="utf-8"))
     messages = [commit["message"] for commit in git_payload["repos"][0]["commits"]]
     total = git_path.stat().st_size + transcripts_path.stat().st_size
+    evening_out = capsys.readouterr().out
+    show_code = main(["show", "--config", str(config)])
+    summary = (
+        f"{day_dir}\n"
+        "дата: 2026-10-05\n"
+        f"байты: {total}\n"
+        "порог: 100000\n"
+        "порог превышен: нет\n"
+        "git: ok, репозиториев: 1, коммитов: 2, "
+        "окно: 2026-10-05T00:00:00+03:00..2026-10-05T18:00:00+03:00\n"
+        "transcripts: ok, сессий: 1, "
+        "окно: 2026-10-05T00:00:00+03:00..2026-10-05T10:00:00+03:00\n"
+        "opencode: не собран, сессий: 0\n"
+        "telegram: не собран, чатов: 0, unlisted: 0\n"
+    )
     assert (
         morning_code,
         transcripts_code,
@@ -169,6 +184,8 @@ def test_collect_one_source_again_replaces_only_its_window(
         json.loads(kept)["window"]["to"],
         git_payload["window"]["to"],
         messages,
+        evening_out,
+        show_code,
         capsys.readouterr().out,
     ) == (
         0,
@@ -179,25 +196,435 @@ def test_collect_one_source_again_replaces_only_its_window(
         "2026-10-05T10:00:00+03:00",
         "2026-10-05T18:00:00+03:00",
         ["утром", "вечером"],
+        summary,
+        0,
+        summary,
+    )
+
+
+@pytest.mark.parametrize("command", ["collect", "show"])
+def test_unknown_source_name_is_a_usage_error(command: str) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main([command, "slack"])
+
+    assert exit_info.value.code == 2
+
+
+def test_show_without_source_repeats_the_summary_and_does_not_collect(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    moment = datetime(2026, 10, 5, 18, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, moment)
+    repo = tmp_path / "repos" / "demo"
+    _commit(repo, "добавил заметку", moment.replace(hour=12))
+    _session(tmp_path / "transcripts", moment.replace(hour=12), text="сделал штуку")
+    config = _config_file(tmp_path)
+
+    collect_code = main(["collect", "--config", str(config)])
+    collected = capsys.readouterr().out
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    before = _files(day_dir)
+
+    _freeze(monkeypatch, moment.replace(hour=21))
+    show_code = main(["show", "--config", str(config)])
+
+    assert (collect_code, show_code, capsys.readouterr().out, _files(day_dir)) == (
+        0,
+        0,
+        collected,
+        before,
+    )
+
+
+def test_show_missing_day_lists_four_uncollected_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    _freeze(monkeypatch, datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW))
+    config = _config_file(tmp_path)
+
+    exit_code = main(["show", "--date", "2026-10-05", "--config", str(config)])
+
+    assert (exit_code, capsys.readouterr().out, (tmp_path / "state").exists()) == (
+        0,
         (
-            f"{day_dir}\n"
             "дата: 2026-10-05\n"
-            f"байты: {total}\n"
+            "байты: 0\n"
             "порог: 100000\n"
             "порог превышен: нет\n"
-            "git: ok, репозиториев: 1, коммитов: 2\n"
-            "transcripts: ok, сессий: 1\n"
+            "git: не собран, репозиториев: 0, коммитов: 0\n"
+            "transcripts: не собран, сессий: 0\n"
             "opencode: не собран, сессий: 0\n"
             "telegram: не собран, чатов: 0, unlisted: 0\n"
+        ),
+        False,
+    )
+
+
+def test_show_missing_dump_says_not_collected_and_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    moment = datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, moment)
+    _session(tmp_path / "transcripts", moment, text="утром")
+    config = _config_file(tmp_path)
+    main(["collect", "transcripts", "--date", "2026-10-05", "--config", str(config)])
+    capsys.readouterr()
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    before = _files(day_dir)
+
+    exit_code = main(["show", "git", "--date", "2026-10-05", "--config", str(config)])
+
+    assert (exit_code, capsys.readouterr().out, _files(day_dir)) == (
+        0,
+        "git: не собран, репозиториев: 0, коммитов: 0\n",
+        before,
+    )
+
+
+def test_show_git_prints_the_diff_and_keeps_uncommitted_apart(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _isolate_home(monkeypatch, tmp_path / "home")
+    sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    _plant(
+        tmp_path,
+        "git",
+        {
+            "schema_version": 2,
+            "date": "2026-10-05",
+            "window": {
+                "from": "2026-10-05T00:00:00+03:00",
+                "to": "2026-10-05T18:00:00+03:00",
+            },
+            "generated_at": "2026-10-05T18:00:00+03:00",
+            "status": "ok",
+            "bytes": 1,
+            "repos": [
+                {
+                    "path": "/repos/demo",
+                    "commits": [
+                        {
+                            "sha": sha,
+                            "committed_at": "2026-10-05T12:00:00+03:00",
+                            "message": "добавил заметку",
+                            "files": ["note.txt", "other.txt"],
+                            "diffstat": " note.txt | 1 +\n 1 file changed, 1 insertion(+)",
+                            "diff": "diff --git a/note.txt b/note.txt\n+добавил заметку\n",
+                        },
+                    ],
+                    "dirty": {
+                        "files": ["note.txt"],
+                        "diffstat": (
+                            " note.txt | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)"
+                        ),
+                    },
+                },
+            ],
+        },
+    )
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    before = _files(day_dir)
+    config = _config_file(tmp_path)
+
+    exit_code = main(["show", "git", "--date", "2026-10-05", "--config", str(config)])
+
+    assert (exit_code, capsys.readouterr().out, _files(day_dir)) == (
+        0,
+        (
+            "# /repos/demo\n"
+            "## commit 2026-10-05T12:00:00+03:00\n"
+            "добавил заметку\n"
+            "files: note.txt, other.txt\n"
+            " note.txt | 1 +\n"
+            " 1 file changed, 1 insertion(+)\n"
+            "diff --git a/note.txt b/note.txt\n"
+            "+добавил заметку\n"
+            "\n"
+            "## в процессе\n"
+            "note.txt\n"
+            " note.txt | 2 +-\n"
+            " 1 file changed, 1 insertion(+), 1 deletion(-)\n"
+        ),
+        before,
+    )
+
+
+def test_show_omits_session_and_chat_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _isolate_home(monkeypatch, tmp_path / "home")
+    session_id = "11111111-1111-1111-1111-111111111111"
+    chat_id = 424242
+    replies = [("user", "сделал штуку"), ("assistant", "готово")]
+    _plant(tmp_path, "transcripts", _session_dump([("proj", session_id, replies)]))
+    _plant(tmp_path, "opencode", _session_dump([("oc", session_id, replies)]))
+    _plant(
+        tmp_path,
+        "telegram",
+        {
+            "schema_version": 2,
+            "date": "2026-10-05",
+            "window": {
+                "from": "2026-10-05T00:00:00+03:00",
+                "to": "2026-10-05T18:00:00+03:00",
+            },
+            "generated_at": "2026-10-05T18:00:00+03:00",
+            "status": "ok",
+            "bytes": 1,
+            "unlisted_active": 3,
+            "chats": [
+                {
+                    "id": chat_id,
+                    "name": "работа",
+                    "messages": [
+                        {
+                            "sent_at": "2026-10-05T12:00:00+03:00",
+                            "author": "Аня",
+                            "text": "посмотрела diff",
+                        },
+                    ],
+                },
+            ],
+        },
+    )
+    before = _files(tmp_path / "state" / "raw" / "2026-10-05")
+    config = _config_file(tmp_path)
+    args = ["--date", "2026-10-05", "--config", str(config)]
+
+    transcripts_code = main(["show", "transcripts", *args])
+    transcripts_out = capsys.readouterr().out
+    opencode_code = main(["show", "opencode", *args])
+    opencode_out = capsys.readouterr().out
+    telegram_code = main(["show", "telegram", *args])
+    telegram_out = capsys.readouterr().out
+
+    assert (
+        transcripts_code,
+        transcripts_out,
+        opencode_code,
+        opencode_out,
+        telegram_code,
+        telegram_out,
+        _files(tmp_path / "state" / "raw" / "2026-10-05"),
+    ) == (
+        0,
+        "## proj\nuser: сделал штуку\nassistant: готово\n",
+        0,
+        "## oc\nuser: сделал штуку\nassistant: готово\n",
+        0,
+        "unlisted_active 3\n# работа\n2026-10-05T12:00:00+03:00 Аня: посмотрела diff\n",
+        before,
+    )
+
+
+def test_show_drops_summary_calls_and_keeps_a_later_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _isolate_home(monkeypatch, tmp_path / "home")
+    _plant(
+        tmp_path,
+        "transcripts",
+        _session_dump(
+            [
+                (
+                    "proj",
+                    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                    [
+                        ("user", "/daily-summary"),
+                        ("assistant", "собрал"),
+                        (
+                            "user",
+                            (
+                                "Briefly inform the user about the task result "
+                                "and perform any follow-up actions (if needed)."
+                            ),
+                        ),
+                        ("assistant", "молчу"),
+                        ("user", "разбери скилл"),
+                        ("assistant", "разобрал"),
+                    ],
+                ),
+                (
+                    "only-call",
+                    "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                    [
+                        ("user", "/daily-summary yesterday"),
+                        ("assistant", "пусто"),
+                    ],
+                ),
+                (
+                    "only-brief",
+                    "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                    [
+                        ("user", "Briefly inform the user about the task result"),
+                        ("assistant", "готово"),
+                    ],
+                ),
+                (
+                    "keep",
+                    "dddddddd-dddd-dddd-dddd-dddddddddddd",
+                    [("user", "/daily-summary разобрать скилл")],
+                ),
+            ],
+        ),
+    )
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    before = _files(day_dir)
+    config = _config_file(tmp_path)
+
+    exit_code = main(
+        ["show", "transcripts", "--date", "2026-10-05", "--config", str(config)],
+    )
+
+    assert (exit_code, capsys.readouterr().out, _files(day_dir)) == (
+        0,
+        (
+            "## proj\n"
+            "assistant: собрал\n"
+            "assistant: молчу\n"
+            "user: разбери скилл\n"
+            "assistant: разобрал\n"
+            "\n"
+            "## keep\n"
+            "user: /daily-summary разобрать скилл\n"
+        ),
+        before,
+    )
+
+
+def test_show_marks_review_axis_and_repeat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _isolate_home(monkeypatch, tmp_path / "home")
+    standards = "You are the STANDARDS axis of a two-axis code review\nсмотри diff"
+    standards_spaced = "You  are the STANDARDS   axis of a two-axis code review\nсмотри diff"
+    spec = "You are the SPEC axis of a two-axis code review"
+    _plant(
+        tmp_path,
+        "opencode",
+        _session_dump(
+            [
+                ("alpha", "11111111-1111-1111-1111-111111111111", [("user", standards)]),
+                ("alpha", "22222222-2222-2222-2222-222222222222", [("user", standards_spaced)]),
+                ("alpha", "33333333-3333-3333-3333-333333333333", [("user", spec)]),
+                ("beta", "44444444-4444-4444-4444-444444444444", [("user", spec)]),
+                ("gamma", "55555555-5555-5555-5555-555555555555", [("user", "сделай штуку")]),
+                ("delta", "77777777-7777-7777-7777-777777777777", [("user", "один\nдва")]),
+                ("delta", "88888888-8888-8888-8888-888888888888", [("user", "один два")]),
+                (
+                    "zeta",
+                    "99999999-9999-9999-9999-999999999999",
+                    [("user", "You are the\nSTANDARDS axis of a two-axis code review")],
+                ),
+                (
+                    "alpha",
+                    "66666666-6666-6666-6666-666666666666",
+                    [
+                        ("user", "/daily-summary"),
+                        ("assistant", "сначала"),
+                        ("user", standards),
+                    ],
+                ),
+            ],
+        ),
+    )
+    config = _config_file(tmp_path)
+
+    exit_code = main(["show", "opencode", "--date", "2026-10-05", "--config", str(config)])
+
+    assert (exit_code, capsys.readouterr().out) == (
+        0,
+        (
+            "## alpha review\n"
+            f"user: {standards}\n"
+            "\n"
+            "## alpha review repeat\n"
+            f"user: {standards_spaced}\n"
+            "\n"
+            "## alpha review\n"
+            f"user: {spec}\n"
+            "\n"
+            "## beta review\n"
+            f"user: {spec}\n"
+            "\n"
+            "## gamma\n"
+            "user: сделай штуку\n"
+            "\n"
+            "## delta\n"
+            "user: один\n"
+            "два\n"
+            "\n"
+            "## delta\n"
+            "user: один два\n"
+            "\n"
+            "## zeta\n"
+            "user: You are the\n"
+            "STANDARDS axis of a two-axis code review\n"
+            "\n"
+            "## alpha review repeat\n"
+            "assistant: сначала\n"
+            f"user: {standards}\n"
         ),
     )
 
 
-def test_unknown_source_name_is_a_usage_error() -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        main(["collect", "slack"])
+def test_show_threshold_uses_raw_file_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _isolate_home(monkeypatch, tmp_path / "home")
+    _plant(
+        tmp_path,
+        "transcripts",
+        _session_dump(
+            [
+                (
+                    "proj",
+                    "11111111-1111-1111-1111-111111111111",
+                    [("user", "Briefly inform the user about the task result " + "x" * 5000)],
+                ),
+            ],
+        ),
+    )
+    config = _config_file(tmp_path)
+    config.write_text(
+        config.read_text(encoding="utf-8") + "\n[summary]\ntwo_stage_threshold_bytes = 1000\n",
+        encoding="utf-8",
+    )
+    size = (tmp_path / "state" / "raw" / "2026-10-05" / "transcripts.json").stat().st_size
 
-    assert exit_info.value.code == 2
+    exit_code = main(["show", "--date", "2026-10-05", "--config", str(config)])
+
+    assert (exit_code, capsys.readouterr().out.splitlines()[1:5]) == (
+        0,
+        [
+            "дата: 2026-10-05",
+            f"байты: {size}",
+            "порог: 1000",
+            "порог превышен: да",
+        ],
+    )
 
 
 def test_full_collect_after_partial_rewrites_every_dump(
@@ -294,8 +721,14 @@ def test_purged_partial_collect_reports_dumps_that_were_on_disk(
         0,
         "дамп не сохранён: дата старше ретенции",
         [
-            "git: пустой, репозиториев: 0, коммитов: 0",
-            "transcripts: ok, сессий: 1",
+            (
+                "git: пустой, репозиториев: 0, коммитов: 0, "
+                "окно: 2026-09-01T00:00:00+03:00..2026-09-01T23:59:59.999999+03:00"
+            ),
+            (
+                "transcripts: ok, сессий: 1, "
+                "окно: 2026-09-01T00:00:00+03:00..2026-09-01T10:00:00+03:00"
+            ),
             "opencode: не собран, сессий: 0",
             "telegram: не собран, чатов: 0, unlisted: 0",
         ],
@@ -853,9 +1286,10 @@ def test_collect_reports_a_missing_config_file(
     )
 
 
-def test_invalid_day_token_is_a_usage_error() -> None:
+@pytest.mark.parametrize("command", ["collect", "show"])
+def test_invalid_day_token_is_a_usage_error(command: str) -> None:
     with pytest.raises(SystemExit) as exit_info:
-        main(["collect", "--date", "завтра"])
+        main([command, "--date", "завтра"])
 
     assert exit_info.value.code == 2
 
@@ -912,6 +1346,46 @@ def _freeze(monkeypatch: pytest.MonkeyPatch, moment: datetime) -> None:
 def _stored(root: Path, day: str, source: str) -> Any:  # noqa: ANN401
     path = root / "state" / "raw" / day / f"{source}.json"
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _session_dump(
+    sessions: list[tuple[str, str, list[tuple[str, str]]]],
+) -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "date": "2026-10-05",
+        "window": {
+            "from": "2026-10-05T00:00:00+03:00",
+            "to": "2026-10-05T18:00:00+03:00",
+        },
+        "generated_at": "2026-10-05T18:00:00+03:00",
+        "status": "ok",
+        "bytes": 1,
+        "sessions": [
+            {
+                "project": project,
+                "id": session_id,
+                "messages": [{"role": role, "text": text} for role, text in messages],
+            }
+            for project, session_id, messages in sessions
+        ],
+    }
+
+
+def _plant(root: Path, source: str, payload: dict[str, Any]) -> None:
+    day_dir = root / "state" / "raw" / "2026-10-05"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    (day_dir / f"{source}.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _files(day_dir: Path) -> list[tuple[str, int, bytes]]:
+    return [
+        (path.name, path.stat().st_mtime_ns, path.read_bytes())
+        for path in sorted(day_dir.iterdir())
+    ]
 
 
 def _config_file(
