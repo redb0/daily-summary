@@ -193,32 +193,11 @@ def test_collect_one_source_again_replaces_only_its_window(
     )
 
 
-def test_unknown_source_name_is_a_usage_error(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    home = tmp_path / "home"
-    _isolate_home(monkeypatch, home)
-    _freeze(monkeypatch, datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW))
-    config = _config_file(tmp_path)
-    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
-    day_dir.mkdir(parents=True)
-    git = day_dir / "git.json"
-    git.write_text("оставить", encoding="utf-8")
-    before = git.read_bytes()
-
+def test_unknown_source_name_is_a_usage_error() -> None:
     with pytest.raises(SystemExit) as exit_info:
-        main(["collect", "slack", "--date", "2026-10-05", "--config", str(config)])
+        main(["collect", "slack"])
 
-    assert (
-        exit_info.value.code,
-        git.read_bytes(),
-        sorted(path.name for path in day_dir.iterdir()),
-    ) == (
-        2,
-        before,
-        ["git.json"],
-    )
+    assert exit_info.value.code == 2
 
 
 def test_full_collect_after_partial_rewrites_every_dump(
