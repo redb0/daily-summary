@@ -46,10 +46,10 @@ def local_now(timezone_name: str) -> datetime:
 
 
 class CollectedDay(NamedTuple):
-    """Дампы, которые лежат в каталоге, и сам каталог, если ретенция его оставила.
+    """Дампы каталога после записи и сам каталог, если ретенция его оставила.
 
-    Нет файла — поле `None`: этот источник не собирали. Если ретенция удалила
-    каталог сразу после записи, поля — дампы этого прохода, их уже не прочитать.
+    Нет файла — поле `None`: этот источник не собирали. Поля сняты до ретенции:
+    они описывают день, даже если каталог сразу удалили.
     """
 
     directory: Path | None
@@ -83,7 +83,7 @@ def collect_and_store(
     `state.raw_retention_days` относительно сегодняшнего дня, включая только
     что записанный день, если его дата тоже старше окна. Содержимое при
     удалении не читается. `progress` получает ход Telegram, пока обходятся
-    чаты и диалоги. Сводка читает каталог, который остался после ретенции.
+    чаты и диалоги. Сводка читает дампы, которые лежали в каталоге до ретенции.
 
     Args:
         config: Загруженные настройки.
@@ -105,8 +105,7 @@ def collect_and_store(
         progress=progress,
     )
     directory, total_bytes, loaded = _store(config, day, written, today=now.date())
-    dumps = loaded if loaded is not None else _kept(written)
-    return CollectedDay(directory, total_bytes, *dumps)
+    return CollectedDay(directory, total_bytes, *loaded)
 
 
 def _resolve_window(day_text: str | None, *, now: datetime) -> tuple[date, Window]:
@@ -153,7 +152,7 @@ def _collect(
     names: tuple[SourceName, ...] = SOURCES if source is None else (source,)
     include_uncommitted = _include_uncommitted(when.day, generated_at=when.generated_at)
     return {
-        name: _one(
+        name: _collect_source(
             config,
             when,
             name,
@@ -164,7 +163,7 @@ def _collect(
     }
 
 
-def _one(
+def _collect_source(
     config: Config,
     when: _When,
     source: SourceName,
@@ -313,7 +312,7 @@ def _store(
     written: Mapping[SourceName, Dump],
     *,
     today: date,
-) -> tuple[Path | None, int, _Loaded | None]:
+) -> tuple[Path | None, int, _Loaded]:
     state_dir = config.state.dir
     _private_dir(state_dir)
     raw_dir = state_dir / "raw"
@@ -323,10 +322,13 @@ def _store(
     for name, dump in written.items():
         _write_private(day_dir / f"{name}.json", render_dump(dump))
     total = _total_bytes(day_dir)
-    _purge(raw_dir, today=today, retention_days=config.state.raw_retention_days)
+    try:
+        loaded = _load(day_dir)
+    finally:
+        _purge(raw_dir, today=today, retention_days=config.state.raw_retention_days)
     if day_dir.is_dir():
-        return day_dir, total, _load(day_dir)
-    return None, total, None
+        return day_dir, total, loaded
+    return None, total, loaded
 
 
 def _total_bytes(day_dir: Path) -> int:
@@ -348,19 +350,6 @@ def _read[D: (GitDump, SessionDump, TelegramDump)](path: Path, kind: type[D]) ->
     if not path.is_file():
         return None
     return kind.model_validate_json(path.read_text(encoding="utf-8"))
-
-
-def _kept(written: Mapping[SourceName, Dump]) -> _Loaded:
-    git = written.get("git")
-    transcripts = written.get("transcripts")
-    opencode = written.get("opencode")
-    telegram = written.get("telegram")
-    return (
-        git if isinstance(git, GitDump) else None,
-        transcripts if isinstance(transcripts, SessionDump) else None,
-        opencode if isinstance(opencode, SessionDump) else None,
-        telegram if isinstance(telegram, TelegramDump) else None,
-    )
 
 
 def _private_dir(path: Path) -> None:

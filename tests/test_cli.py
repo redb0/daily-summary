@@ -131,51 +131,6 @@ def test_collect_writes_private_dump_and_prints_summary(
     )
 
 
-def test_collect_named_source_writes_only_that_dump(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    home = tmp_path / "home"
-    _isolate_home(monkeypatch, home)
-    moment = datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW)
-    _freeze(monkeypatch, moment)
-    _commit(tmp_path / "repos" / "demo", "добавил заметку", moment)
-    config = _config_file(tmp_path)
-
-    exit_code = main(["collect", "git", "--date", "2026-10-05", "--config", str(config)])
-
-    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
-    git_path = day_dir / "git.json"
-    payload = json.loads(git_path.read_text(encoding="utf-8"))
-    assert (
-        exit_code,
-        sorted(path.name for path in day_dir.iterdir()),
-        payload["window"],
-        payload["repos"][0]["commits"][0]["message"],
-        capsys.readouterr().out,
-    ) == (
-        0,
-        ["git.json"],
-        {
-            "from": "2026-10-05T00:00:00+03:00",
-            "to": "2026-10-05T23:59:59.999999+03:00",
-        },
-        "добавил заметку",
-        (
-            f"{day_dir}\n"
-            "дата: 2026-10-05\n"
-            f"байты: {git_path.stat().st_size}\n"
-            "порог: 100000\n"
-            "порог превышен: нет\n"
-            "git: ok, репозиториев: 1, коммитов: 1\n"
-            "transcripts: не собран, сессий: 0\n"
-            "opencode: не собран, сессий: 0\n"
-            "telegram: не собран, чатов: 0, unlisted: 0\n"
-        ),
-    )
-
-
 def test_collect_one_source_again_replaces_only_its_window(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -315,6 +270,57 @@ def test_full_collect_after_partial_rewrites_every_dump(
         "2026-10-05T18:00:00+03:00",
         ["утром", "вечером"],
         ("empty", "2026-10-05T18:00:00+03:00", "disabled", "disabled"),
+    )
+
+
+def test_purged_partial_collect_reports_dumps_that_were_on_disk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    _freeze(monkeypatch, datetime(2026, 10, 6, 10, 0, tzinfo=_MOSCOW))
+    day_dir = tmp_path / "state" / "raw" / "2026-09-01"
+    day_dir.mkdir(parents=True)
+    (day_dir / "transcripts.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "date": "2026-09-01",
+                "window": {
+                    "from": "2026-09-01T00:00:00+03:00",
+                    "to": "2026-09-01T10:00:00+03:00",
+                },
+                "generated_at": "2026-09-01T10:00:00+03:00",
+                "status": "ok",
+                "bytes": 1,
+                "sessions": [
+                    {
+                        "project": "proj",
+                        "id": "11111111-1111-1111-1111-111111111111",
+                        "messages": [{"role": "user", "text": "было"}],
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    config = _config_file(tmp_path)
+
+    exit_code = main(["collect", "git", "--date", "2026-09-01", "--config", str(config)])
+
+    lines = capsys.readouterr().out.splitlines()
+    assert (exit_code, lines[0], lines[5:9], day_dir.exists()) == (
+        0,
+        "дамп не сохранён: дата старше ретенции",
+        [
+            "git: пустой, репозиториев: 0, коммитов: 0",
+            "transcripts: ok, сессий: 1",
+            "opencode: не собран, сессий: 0",
+            "telegram: не собран, чатов: 0, unlisted: 0",
+        ],
+        False,
     )
 
 
