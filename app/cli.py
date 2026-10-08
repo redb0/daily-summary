@@ -47,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("--config", type=Path, default=None)
     init = commands.add_parser("init", help="Настроить доступ к Telegram в своём терминале.")
     init.add_argument("--relogin", action="store_true")
+    init.add_argument("--login", choices=("qr", "code"), default=None)
     init.add_argument("--config", type=Path, default=None)
     chats = commands.add_parser("chats", help="Показать чаты и фрагмент конфига.")
     chats.add_argument("--config", type=Path, default=None)
@@ -113,14 +114,19 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "write":
         return _run_write(config, args.date, apply=args.apply)
     if args.command == "init":
-        return _run_init(config, relogin=args.relogin)
+        return _run_init(config, relogin=args.relogin, login=args.login)
     return _run_chats(config)
 
 
 def _run_collect(config: Config, token: str | None) -> int:
-    path, dump = collect_and_store(config, token)
+    path, dump = collect_and_store(config, token, progress=_progress)
     sys.stdout.write(_report(path, dump))
     return 0
+
+
+def _progress(line: str) -> None:
+    sys.stderr.write(f"{line}\n")
+    sys.stderr.flush()
 
 
 def _run_write(config: Config, token: str, *, apply: bool) -> int:
@@ -130,10 +136,24 @@ def _run_write(config: Config, token: str, *, apply: bool) -> int:
     return 0
 
 
-def _run_init(config: Config, *, relogin: bool) -> int:
-    account = run_init(config, relogin=relogin, ask=_ask_credential)
+def _run_init(config: Config, *, relogin: bool, login: str | None) -> int:
+    account = run_init(
+        config,
+        relogin=relogin,
+        login=login,
+        ask=_ask_credential,
+        choose=_ask_login,
+    )
     sys.stdout.write(f"Вошли как {account}\n")
     return 0
+
+
+def _ask_login() -> str:
+    while True:
+        answer = input("Вход (qr/code): ").strip().lower()
+        if answer in {"qr", "code"}:
+            return answer
+        sys.stderr.write("Ожидается qr или code.\n")
 
 
 def _ask_credential(key: str) -> str:

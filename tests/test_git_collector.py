@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.collectors.git import CollectedGit, collect_git
 from app.config import Config, GitConfig, NotesConfig, load_config
 from app.summary.models import GitCommit, GitDirty, GitRepo, Window
@@ -101,7 +103,11 @@ def _day(year: int, month: int, day: int) -> Window:
     )
 
 
-def test_collects_commit_and_dirty_work(tmp_path: Path) -> None:
+def test_collects_commit_and_dirty_work(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _freeze(monkeypatch, datetime(2026, 10, 5, 18, 0, tzinfo=_MOSCOW))
     repo = tmp_path / "repo"
     _init_repo(repo)
     note = repo / "note.txt"
@@ -135,6 +141,54 @@ def test_collects_commit_and_dirty_work(tmp_path: Path) -> None:
         ],
         truncations=[],
     )
+
+
+def test_past_day_does_not_include_todays_dirty_work(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _freeze(monkeypatch, datetime(2026, 10, 6, 12, 0, tzinfo=_MOSCOW))
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    note = repo / "note.txt"
+    note.write_text("привет\n")
+    _git(repo, "add", "note.txt")
+    _commit(repo, "добавить приветствие", datetime(2026, 10, 5, 9, 0, tzinfo=ZoneInfo("UTC")))
+    note.write_text("привет\nещё\n")
+
+    collected = collect_git(_config(tmp_path), _day(2026, 10, 5))
+
+    assert (collected.repos[0].dirty, [item.message for item in collected.repos[0].commits]) == (
+        None,
+        ["добавить приветствие"],
+    )
+
+
+def test_repo_without_commits_keeps_dirty_work_inside_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _freeze(monkeypatch, datetime(2026, 10, 5, 18, 0, tzinfo=_MOSCOW))
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "note.txt").write_text("черновик\n")
+
+    collected = collect_git(_config(tmp_path), _day(2026, 10, 5))
+
+    assert collected == CollectedGit(
+        repos=[
+            GitRepo(
+                path=str(repo.resolve()),
+                commits=[],
+                dirty=GitDirty(files=["note.txt"], diffstat=""),
+            ),
+        ],
+        truncations=[],
+    )
+
+
+def _freeze(monkeypatch: pytest.MonkeyPatch, moment: datetime) -> None:
+    monkeypatch.setattr("app.collectors.git._now", lambda _zone: moment)
 
 
 def _limited(

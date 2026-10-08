@@ -88,7 +88,7 @@ def make_client(session_file: Path, api_id: int, api_hash: str) -> TelegramClien
 
 
 def require_session(session_file: Path) -> None:
-    """Отказать, если файла сессии нет. Вход из агента завис бы на коде из SMS.
+    """Отказать, если файла сессии нет. Вход из агента завис бы на QR.
 
     Args:
         session_file: Ожидаемый файл сессии.
@@ -99,7 +99,10 @@ def require_session(session_file: Path) -> None:
     if session_file.is_file():
         return
     message = f"Сессия Telegram не найдена: {session_file}"
-    hint = f"Выполните {_SETUP} в своём терминале и остановитесь: код из SMS читается со stdin."
+    hint = (
+        f"Выполните {_SETUP} в своём терминале и выберите qr или code. "
+        "В чате агента вход зависнет."
+    )
     raise SummaryError(message, hint, ErrorCode.NO_SESSION)
 
 

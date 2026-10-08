@@ -5,6 +5,7 @@ import re
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict
@@ -26,6 +27,14 @@ _GIT = (
 )
 
 
+class _CommitRef(NamedTuple):
+    """Коммит до чтения diff: хеш, момент и автор."""
+
+    sha: str
+    moment: datetime
+    email: str
+
+
 class CollectedGit(BaseModel):
     """Результат сборщика. Запись дампа и маскирование — не его работа."""
 
@@ -39,7 +48,8 @@ def collect_git(config: Config, window: Window) -> CollectedGit:
     """Собрать коммиты авторов из конфига и незакоммиченные изменения.
 
     Время коммита переводится в `notes.timezone`, чтобы граница дня совпала
-    с заметкой. Битый репозиторий и репозиторий без коммитов пропускаются.
+    с заметкой. Незакоммиченное попадает только в окно, которое содержит
+    текущий момент. Битый репозиторий без таких правок пропускается.
     Усечения — человекочитаемые строки, не признак пропуска репозитория.
 
     Args:
@@ -162,16 +172,33 @@ def _collect_repo(
     zone: ZoneInfo,
 ) -> tuple[GitRepo, list[str]] | None:
     records = _commits_in_window(path, window)
+    dirty = _dirty(path, config, window, zone=zone)
     if records is None:
-        return None
+        if dirty is None:
+            return None
+        return GitRepo(path=str(path), commits=[], dirty=dirty), []
     commits, notes = _read_commits(path, records, config, zone=zone)
-    dirty = _read_dirty(path) if config.git.include_dirty else None
     if not commits and dirty is None:
         return None
     return GitRepo(path=str(path), commits=commits, dirty=dirty), notes
 
 
-def _commits_in_window(repo: Path, window: Window) -> list[tuple[str, datetime, str]] | None:
+def _dirty(path: Path, config: Config, window: Window, *, zone: ZoneInfo) -> GitDirty | None:
+    if not config.git.include_dirty or not _covers_now(window, zone):
+        return None
+    return _read_dirty(path)
+
+
+def _covers_now(window: Window, zone: ZoneInfo) -> bool:
+    moment = _now(zone)
+    return window.from_ <= moment <= window.to
+
+
+def _now(zone: ZoneInfo) -> datetime:
+    return datetime.now(zone)
+
+
+def _commits_in_window(repo: Path, window: Window) -> list[_CommitRef] | None:
     since = (window.from_ - timedelta(seconds=1)).isoformat()
     until = (window.to + timedelta(seconds=1)).isoformat()
     text = _git(
@@ -191,7 +218,7 @@ def _commits_in_window(repo: Path, window: Window) -> list[tuple[str, datetime, 
     return [parsed for chunk in text.split("\x1e") if (parsed := _parse_commit(chunk, window))]
 
 
-def _parse_commit(chunk: str, window: Window) -> tuple[str, datetime, str] | None:
+def _parse_commit(chunk: str, window: Window) -> _CommitRef | None:
     cleaned = chunk.strip()
     if not cleaned:
         return None
@@ -200,13 +227,13 @@ def _parse_commit(chunk: str, window: Window) -> tuple[str, datetime, str] | Non
     if moment.tzinfo is None:
         return None
     if window.from_ <= moment <= window.to:
-        return sha, moment, email
+        return _CommitRef(sha, moment, email)
     return None
 
 
 def _read_commits(
     repo: Path,
-    records: list[tuple[str, datetime, str]],
+    records: list[_CommitRef],
     config: Config,
     *,
     zone: ZoneInfo,
@@ -214,7 +241,7 @@ def _read_commits(
     commits: list[GitCommit] = []
     notes: list[str] = []
     for sha, moment, email in records:
-        limited, commit_notes = _one_commit(repo, (sha, moment, email), config, zone=zone)
+        limited, commit_notes = _one_commit(repo, _CommitRef(sha, moment, email), config, zone=zone)
         if limited is None:
             continue
         commits.append(limited)
@@ -224,7 +251,7 @@ def _read_commits(
 
 def _one_commit(
     repo: Path,
-    record: tuple[str, datetime, str],
+    record: _CommitRef,
     config: Config,
     *,
     zone: ZoneInfo,

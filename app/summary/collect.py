@@ -1,11 +1,11 @@
 """Сборка сырого дампа: окно дня, источники, маскирование и файл вне vault."""
 
-import os
-import tempfile
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from app.atomic import replace_text
 from app.collectors.git import collect_git
 from app.collectors.opencode import collect_opencode
 from app.collectors.telegram.collector import collect_telegram
@@ -42,17 +42,24 @@ def local_now(timezone_name: str) -> datetime:
     return datetime.now(ZoneInfo(timezone_name))
 
 
-def collect_and_store(config: Config, day_text: str | None) -> tuple[Path | None, RawDump]:
+def collect_and_store(
+    config: Config,
+    day_text: str | None,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> tuple[Path | None, RawDump]:
     """Собрать день и записать JSON.
 
     Каталог дампов создаётся с правами 700, файл — 600. После записи удаляются
     дампы старше `state.raw_retention_days` относительно сегодняшнего дня,
     включая только что записанный, если его дата тоже старше окна.
+    `progress` получает ход Telegram, пока обходятся чаты и диалоги.
 
     Args:
         config: Загруженные настройки.
         day_text: `None` — сегодня до текущего момента. `today`, `yesterday`
             или `YYYY-MM-DD` — календарный день целиком.
+        progress: Куда писать ход Telegram. `None` — молчать.
 
     Returns:
         Путь к файлу, если он остался после ретенции, и дамп. `stats.bytes`
@@ -60,7 +67,9 @@ def collect_and_store(config: Config, day_text: str | None) -> tuple[Path | None
     """
     now = local_now(config.notes.timezone)
     day, window = _resolve_window(day_text, now=now)
-    dump = _with_size(_mask_dump(_assemble(config, day, window, generated_at=now)))
+    dump = _with_size(
+        _mask_dump(_assemble(config, day, window, generated_at=now, progress=progress)),
+    )
     path = _store(config, day, render_raw_dump(dump), today=now.date())
     return path, dump
 
@@ -90,8 +99,15 @@ def resolve_day(day_text: str | None, *, today: date) -> date:
     return date.fromisoformat(day_text)
 
 
-def _assemble(config: Config, day: date, window: Window, *, generated_at: datetime) -> RawDump:
-    sources, truncations = _sources(config, window)
+def _assemble(
+    config: Config,
+    day: date,
+    window: Window,
+    *,
+    generated_at: datetime,
+    progress: Callable[[str], None] | None,
+) -> RawDump:
+    sources, truncations = _sources(config, window, progress=progress)
     return RawDump(
         schema_version=1,
         date=day,
@@ -103,11 +119,16 @@ def _assemble(config: Config, day: date, window: Window, *, generated_at: dateti
     )
 
 
-def _sources(config: Config, window: Window) -> tuple[Sources, list[str]]:
+def _sources(
+    config: Config,
+    window: Window,
+    *,
+    progress: Callable[[str], None] | None,
+) -> tuple[Sources, list[str]]:
     git, git_notes = _git_source(config, window)
     transcripts, transcript_notes = _transcript_source(config, window)
     opencode, opencode_notes = _opencode_source(config, window)
-    telegram, telegram_notes = _telegram_source(config, window)
+    telegram, telegram_notes = _telegram_source(config, window, progress=progress)
     sources = Sources(git=git, transcripts=transcripts, opencode=opencode, telegram=telegram)
     return sources, [*git_notes, *transcript_notes, *opencode_notes, *telegram_notes]
 
@@ -116,7 +137,7 @@ def _git_source(config: Config, window: Window) -> tuple[GitSource, list[str]]:
     try:
         collected = collect_git(config, window)
     except (OSError, SummaryError) as exc:
-        return _failed_git(exc), []
+        return _mark_unavailable(GitSource, exc), []
     if not collected.repos:
         return GitSource(status=SourceStatus.EMPTY), []
     return GitSource(status=SourceStatus.OK, repos=collected.repos), list(collected.truncations)
@@ -126,7 +147,7 @@ def _transcript_source(config: Config, window: Window) -> tuple[TranscriptsSourc
     try:
         collected = collect_transcripts(config, window)
     except (OSError, SummaryError) as exc:
-        return _failed_sessions(exc), []
+        return _mark_unavailable(TranscriptsSource, exc), []
     if not collected.sessions:
         return TranscriptsSource(status=SourceStatus.EMPTY), []
     return (
@@ -141,7 +162,7 @@ def _opencode_source(config: Config, window: Window) -> tuple[TranscriptsSource,
     try:
         collected = collect_opencode(config, window)
     except (OSError, SummaryError) as exc:
-        return _failed_sessions(exc), []
+        return _mark_unavailable(TranscriptsSource, exc), []
     if not collected.sessions:
         return TranscriptsSource(status=SourceStatus.EMPTY), list(collected.truncations)
     return (
@@ -150,13 +171,18 @@ def _opencode_source(config: Config, window: Window) -> tuple[TranscriptsSource,
     )
 
 
-def _telegram_source(config: Config, window: Window) -> tuple[TelegramSource, list[str]]:
+def _telegram_source(
+    config: Config,
+    window: Window,
+    *,
+    progress: Callable[[str], None] | None,
+) -> tuple[TelegramSource, list[str]]:
     if not config.telegram.enabled:
         return TelegramSource(status=SourceStatus.DISABLED), []
     try:
-        collected = collect_telegram(config, window)
+        collected = collect_telegram(config, window, progress=progress)
     except (OSError, SummaryError) as exc:
-        return _failed_telegram(exc), []
+        return _mark_unavailable(TelegramSource, exc), []
     if not collected.chats and collected.unlisted_active == 0:
         return TelegramSource(status=SourceStatus.EMPTY), list(collected.truncations)
     return (
@@ -169,19 +195,12 @@ def _telegram_source(config: Config, window: Window) -> tuple[TelegramSource, li
     )
 
 
-def _failed_telegram(exc: Exception) -> TelegramSource:
+def _mark_unavailable[S: (GitSource, TranscriptsSource, TelegramSource)](
+    kind: type[S],
+    exc: Exception,
+) -> S:
     code, reason = _error_parts(exc)
-    return TelegramSource(status=SourceStatus.UNAVAILABLE, code=code, reason=reason)
-
-
-def _failed_git(exc: Exception) -> GitSource:
-    code, reason = _error_parts(exc)
-    return GitSource(status=SourceStatus.UNAVAILABLE, code=code, reason=reason)
-
-
-def _failed_sessions(exc: Exception) -> TranscriptsSource:
-    code, reason = _error_parts(exc)
-    return TranscriptsSource(status=SourceStatus.UNAVAILABLE, code=code, reason=reason)
+    return kind(status=SourceStatus.UNAVAILABLE, code=code, reason=reason)
 
 
 def _error_parts(exc: Exception) -> tuple[ErrorCode | None, str]:
@@ -248,16 +267,7 @@ def _private_dir(path: Path) -> None:
 
 
 def _write_private(path: Path, text: str) -> None:
-    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp = Path(name)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-        tmp.replace(path)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
+    replace_text(path, text, mode=0o600)
 
 
 def _purge(raw_dir: Path, *, today: date, retention_days: int) -> None:

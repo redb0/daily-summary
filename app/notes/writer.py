@@ -1,14 +1,13 @@
 """Подстановка блока итогов в ежедневную заметку."""
 
 import difflib
-import os
 import re
-import tempfile
 from datetime import date
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from app.atomic import replace_text
 from app.config import Config, require_notes_dir
 from app.errors import ErrorCode, SummaryError
 
@@ -137,17 +136,7 @@ def _append(original: str, block: str) -> str:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    mode = path.stat().st_mode & 0o777 if path.is_file() else 0o644
-    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp = Path(name)
-    try:
-        os.fchmod(fd, mode)
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-        tmp.replace(path)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
+    replace_text(path, text)
 
 
 def _omit_empty_sections(body: str) -> str:

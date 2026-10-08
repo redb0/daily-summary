@@ -8,7 +8,8 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, RPCError
+from telethon.tl.functions.messages import GetForumTopicsRequest
 from telethon.tl.types import MessageMediaPhoto, User
 
 from app.collectors.telegram.collector import CollectedTelegram, collect_telegram
@@ -171,13 +172,24 @@ def test_over_limit_keeps_the_latest_messages(tmp_path: Path) -> None:
 def test_unlisted_chats_are_a_count_without_text(tmp_path: Path) -> None:
     inside = datetime(2026, 10, 5, 16, 0, tzinfo=_MOSCOW)
     outside = datetime(2026, 10, 4, 16, 0, tzinfo=_MOSCOW)
+    later = datetime(2026, 10, 6, 9, 0, tzinfo=_MOSCOW)
     client = _Client(
-        entities={7: User(id=7)},
-        messages={7: [_message(1, "в конфиге", "Коллега")]},
+        entities={
+            7: User(id=7),
+            10: SimpleNamespace(id=10),
+            11: SimpleNamespace(id=11),
+        },
+        messages={
+            7: [_message(1, "в конфиге", "Коллега")],
+            10: [_message(2, "внутри окна", "Коллега", at=inside)],
+            11: [_message(3, "уже следующий день", "Коллега", at=later)],
+        },
         dialogs=[
             SimpleNamespace(id=7, date=inside),
             SimpleNamespace(id=8, date=inside),
             SimpleNamespace(id=9, date=outside),
+            SimpleNamespace(id=10, date=datetime(2026, 10, 6, 12, 0, tzinfo=_MOSCOW)),
+            SimpleNamespace(id=11, date=datetime(2026, 10, 6, 12, 0, tzinfo=_MOSCOW)),
         ],
     )
 
@@ -197,8 +209,150 @@ def test_unlisted_chats_are_a_count_without_text(tmp_path: Path) -> None:
             ),
         ],
         truncations=[],
-        unlisted_active=1,
+        unlisted_active=2,
     )
+
+
+def test_progress_counts_chats_then_dialogs(tmp_path: Path) -> None:
+    client = _Client(
+        entities={7: User(id=7), 8: User(id=8)},
+        messages={
+            7: [_message(1, "а", "Коллега")],
+            8: [_message(2, "б", "Коллега")],
+        },
+        dialogs=[
+            SimpleNamespace(id=7, date=_AT),
+            SimpleNamespace(id=9, date=_AT),
+            SimpleNamespace(id=10, date=_AT),
+        ],
+    )
+    lines: list[str] = []
+
+    collect_telegram(
+        _config(tmp_path, [(7, "личка"), (8, "группа")]),
+        _window(),
+        client=client,
+        sleep=_no_sleep,
+        progress=lines.append,
+    )
+
+    assert lines == [
+        "telegram: чат 1/2",
+        "telegram: чат 2/2",
+        "telegram: диалоги",
+        "telegram: диалоги 1",
+        "telegram: диалоги 2",
+        "telegram: диалоги 3",
+    ]
+
+
+def test_forum_topics_are_one_chat(tmp_path: Path) -> None:
+    general_at = datetime(2026, 10, 5, 10, 0, tzinfo=_MOSCOW)
+    topic_at = datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW)
+    client = _ForumClient(
+        entities={3: SimpleNamespace(id=3, forum=True)},
+        messages={3: []},
+    )
+    client.topics = {
+        3: {
+            1: [_message(1, "общее", "Коллега", at=general_at)],
+            2: [_message(2, "топик", "Коллега", at=topic_at)],
+        },
+    }
+
+    collected = collect_telegram(
+        _config(tmp_path, [(3, "форум")]),
+        _window(),
+        client=client,
+        sleep=_no_sleep,
+    )
+
+    assert collected.chats == [
+        TelegramChatLog(
+            id=3,
+            name="форум",
+            messages=[
+                TelegramMessage(sent_at=general_at, author="Коллега", text="общее"),
+                TelegramMessage(sent_at=topic_at, author="Коллега", text="топик"),
+            ],
+        ),
+    ]
+
+
+def test_forward_uses_the_resolved_author(tmp_path: Path) -> None:
+    client = _Client(
+        entities={
+            3: User(id=3, first_name="Коллега"),
+            4: User(id=4, first_name="Борис"),
+        },
+        messages={
+            3: [
+                _message(
+                    1,
+                    "смотри",
+                    "Коллега",
+                    fwd_from=SimpleNamespace(from_id=SimpleNamespace(user_id=4)),
+                ),
+            ],
+        },
+    )
+
+    collected = collect_telegram(
+        _config(tmp_path, [(3, "личка")]),
+        _window(),
+        client=client,
+        sleep=_no_sleep,
+    )
+
+    assert collected.chats[0].messages == [
+        TelegramMessage(sent_at=_AT, author="Коллега", text="переслано от Борис: смотри"),
+    ]
+
+
+def test_rpc_error_on_one_chat_keeps_the_other(tmp_path: Path) -> None:
+    class _Broken(_Client):
+        async def get_entity(self, chat_id: int) -> object:
+            if chat_id == 7:
+                raise RPCError(None, "fail", 500)
+            return await super().get_entity(chat_id)
+
+    client = _Broken(
+        entities={8: User(id=8, first_name="Коллега")},
+        messages={8: [_message(1, "осталось", "Коллега")]},
+    )
+
+    collected = collect_telegram(
+        _config(tmp_path, [(7, "сломанный"), (8, "открытый")]),
+        _window(),
+        client=client,
+        sleep=_no_sleep,
+    )
+
+    assert (collected.chats[0].id, collected.truncations) == (
+        8,
+        ["сломанный: Telegram прервал чтение чата."],
+    )
+
+
+def test_rpc_error_while_listing_dialogs_is_telegram(
+    tmp_path: Path,
+) -> None:
+    class _Dialogs(_Client):
+        async def iter_dialogs(self) -> AsyncIterator[SimpleNamespace]:
+            raise RPCError(None, "fail", 500)
+            yield SimpleNamespace()
+
+    client = _Dialogs(entities={7: User(id=7)}, messages={7: [_message(1, "есть", "Коллега")]})
+
+    with pytest.raises(SummaryError) as exc_info:
+        collect_telegram(
+            _config(tmp_path, [(7, "личка")]),
+            _window(),
+            client=client,
+            sleep=_no_sleep,
+        )
+
+    assert exc_info.value.code == ErrorCode.TELEGRAM
 
 
 def test_short_flood_wait_is_slept_off_and_the_message_kept(tmp_path: Path) -> None:
@@ -266,25 +420,36 @@ def test_missing_credentials_are_no_credentials(tmp_path: Path) -> None:
     )
 
 
-def test_unreadable_chat_is_cannot_resolve(tmp_path: Path) -> None:
+def test_unreadable_chat_is_skipped_and_the_other_chat_stays(tmp_path: Path) -> None:
     class _Missing(_Client):
         async def get_entity(self, chat_id: int) -> object:
-            message = str(chat_id)
-            raise ValueError(message)
+            if chat_id == 7:
+                message = str(chat_id)
+                raise ValueError(message)
+            return await super().get_entity(chat_id)
 
-    client = _Missing(entities={}, messages={})
+    client = _Missing(
+        entities={8: User(id=8, first_name="Коллега")},
+        messages={8: [_message(1, "осталось", "Коллега")]},
+    )
 
-    with pytest.raises(SummaryError) as exc_info:
-        collect_telegram(
-            _config(tmp_path, [(7, "личка")]),
-            _window(),
-            client=client,
-            sleep=_no_sleep,
-        )
+    collected = collect_telegram(
+        _config(tmp_path, [(7, "закрытый"), (8, "открытый")]),
+        _window(),
+        client=client,
+        sleep=_no_sleep,
+    )
 
-    assert (exc_info.value.code, exc_info.value.message) == (
-        ErrorCode.CANNOT_RESOLVE,
-        "Не удалось открыть чат 7.",
+    assert collected == CollectedTelegram(
+        chats=[
+            TelegramChatLog(
+                id=8,
+                name="открытый",
+                messages=[TelegramMessage(sent_at=_AT, author="Коллега", text="осталось")],
+            ),
+        ],
+        truncations=["Не удалось открыть чат 7."],
+        unlisted_active=0,
     )
 
 
@@ -354,10 +519,10 @@ def test_stored_dump_counts_telegram_messages(
         notes=NotesConfig(timezone="Europe/Moscow"),
         state=StateConfig(dir=tmp_path / "state"),
         git=GitConfig(roots=[repos], authors=["nobody@example.com"]),
-            transcripts=TranscriptsConfig(roots=[transcripts]),
-            opencode=OpencodeConfig(enabled=False),
-            telegram=TelegramConfig(chats=[TelegramChat(id=7, name="личка")]),
-        )
+        transcripts=TranscriptsConfig(roots=[transcripts]),
+        opencode=OpencodeConfig(enabled=False),
+        telegram=TelegramConfig(chats=[TelegramChat(id=7, name="личка")]),
+    )
 
     _path, dump = collect_and_store(config, "2026-10-05")
 
@@ -441,6 +606,7 @@ class _Client:
     ) -> None:
         self.entities = entities
         self.messages = messages
+        self.topics: dict[int, dict[int, list[SimpleNamespace]]] = {}
         self.dialogs = [] if dialogs is None else dialogs
         self.floods = [] if floods is None else floods
         self.flood_at = flood_at
@@ -458,12 +624,14 @@ class _Client:
         limit: int,
         offset_id: int = 0,
         offset_date: datetime | None = None,
+        reply_to: int | None = None,
     ) -> Sequence[object]:
         if self.flood_at == "messages":
             self._flood()
         chat_id = self._resolved[id(entity)]
+        pool = self._pool(chat_id, reply_to)
         chosen: list[SimpleNamespace] = []
-        for message in self.messages[chat_id]:
+        for message in pool:
             if offset_id and message.id >= offset_id:
                 continue
             if offset_date is not None and message.date >= offset_date:
@@ -478,8 +646,26 @@ class _Client:
             seconds = self.floods.pop(0)
             raise FloodWaitError(None, capture=seconds)
 
+    def _pool(self, chat_id: int, reply_to: int | None) -> list[SimpleNamespace]:
+        if reply_to is None:
+            return self.messages[chat_id]
+        return self.topics.get(chat_id, {}).get(reply_to, [])
+
     async def iter_dialogs(self) -> AsyncIterator[SimpleNamespace]:
         if self.flood_at == "dialogs":
             self._flood()
         for dialog in self.dialogs:
             yield dialog
+
+
+class _ForumClient(_Client):
+    async def __call__(self, request: object) -> object:
+        if not isinstance(request, GetForumTopicsRequest):
+            message = type(request).__name__
+            raise TypeError(message)
+        return SimpleNamespace(
+            topics=[
+                SimpleNamespace(id=1, top_message=1, date=_AT),
+                SimpleNamespace(id=2, top_message=2, date=_AT),
+            ],
+        )

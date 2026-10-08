@@ -8,23 +8,30 @@ https://github.com/Lancetnik/slop-writer/blob/main/src/slop_writer/init.py
 """
 
 import asyncio
-import os
-import tempfile
-from collections.abc import Callable, Iterator
+import getpass
+import sys
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal, Protocol, cast
 
+import qrcode
 from telethon.errors import (
     ApiIdInvalidError,
     FloodWaitError,
+    PasswordHashInvalidError,
     PhoneNumberBannedError,
     PhoneNumberInvalidError,
+    SessionPasswordNeededError,
 )
 
+from app.atomic import replace_text
 from app.collectors.telegram import tg
 from app.collectors.telegram.tg import flood_wait, session_path
 from app.config import Config
 from app.errors import ErrorCode, SummaryError
+
+type LoginMethod = Literal["qr", "code"]
 
 ENV_KEYS = ("TG_API_ID", "TG_API_HASH", "TG_PHONE")
 _CREDENTIALS_URL = "https://my.telegram.org/apps"
@@ -131,13 +138,22 @@ def describe_account(me: object) -> str:
     return " / ".join(parts)
 
 
-def run_init(config: Config, *, relogin: bool, ask: Callable[[str], str]) -> str:
+def run_init(
+    config: Config,
+    *,
+    relogin: bool,
+    login: str | None,
+    ask: Callable[[str], str],
+    choose: Callable[[], str],
+) -> str:
     """Дописать только недостающие секреты и проверить сессию живым входом.
 
     Args:
         config: Настройки. Каталог сессии — `state.dir`.
         relogin: Удалить файл сессии перед входом.
+        login: `qr` или `code`. `None` — спросить, когда входа ещё нет.
         ask: Вопрос в терминале. Ключ — имя переменной.
+        choose: Ответ на `qr` или `code`, если флаг не передан.
 
     Returns:
         Описание аккаунта из `get_me`.
@@ -156,7 +172,6 @@ def run_init(config: Config, *, relogin: bool, ask: Callable[[str], str]) -> str
         drop_session(session)
     api_id = int(values["TG_API_ID"])
     api_hash = values["TG_API_HASH"]
-    phone = values["TG_PHONE"]
     if session.is_file():
         session.chmod(0o600)
         found = asyncio.run(verify_session(session, api_id, api_hash))
@@ -164,7 +179,15 @@ def run_init(config: Config, *, relogin: bool, ask: Callable[[str], str]) -> str
             return found
     session.parent.mkdir(parents=True, exist_ok=True)
     session.parent.chmod(0o700)
-    account = asyncio.run(run_login(session, api_id=api_id, api_hash=api_hash, phone=phone))
+    account = asyncio.run(
+        run_login(
+            session,
+            api_id=api_id,
+            api_hash=api_hash,
+            phone=values["TG_PHONE"],
+            method=_login_method(login, choose),
+        ),
+    )
     if session.is_file():
         session.chmod(0o600)
     return account
@@ -192,25 +215,161 @@ async def verify_session(session: Path, api_id: int, api_hash: str) -> str | Non
         await client.disconnect()
 
 
-async def run_login(session: Path, *, api_id: int, api_hash: str, phone: str) -> str:
-    """Интерактивный вход. Код и пароль 2FA спрашивает Telethon со stdin.
+async def run_login(
+    session: Path,
+    *,
+    api_id: int,
+    api_hash: str,
+    phone: str,
+    method: LoginMethod,
+) -> str:
+    """Войти выбранным способом: QR с телефона или код в уже открытый Telegram.
 
     Args:
         session: Куда положить сессию.
         api_id: Идентификатор приложения.
         api_hash: Секрет приложения.
-        phone: Телефон в международном формате.
+        phone: Телефон для входа кодом.
+        method: `qr` или `code`.
 
     Returns:
-        Описание аккаунта после `start`.
+        Описание аккаунта после входа.
     """
     client = tg.make_client(session, api_id, api_hash)
     try:
         with _translated_auth_errors():
-            await client.start(phone=phone)
+            if method == "qr":
+                await client.connect()
+                await _qr_sign_in(client)
+            else:
+                await _code_sign_in(client, phone)
             return describe_account(await client.get_me())
     finally:
         await client.disconnect()
+
+
+def _login_method(login: str | None, choose: Callable[[], str]) -> LoginMethod:
+    picked = login if login is not None else choose().strip().lower()
+    methods: dict[str, LoginMethod] = {"qr": "qr", "code": "code"}
+    found = methods.get(picked)
+    if found is not None:
+        return found
+    message = f"Неизвестный способ входа: {picked}."
+    hint = "Укажите qr или code."
+    raise SummaryError(message, hint, ErrorCode.NO_CREDENTIALS)
+
+
+class _QrCode(Protocol):
+    url: str
+
+    async def wait(self) -> object: ...
+
+
+class _QrClient(Protocol):
+    async def qr_login(self) -> _QrCode: ...
+
+    async def sign_in(self, password: str) -> object: ...
+
+
+class _CodeClient(Protocol):
+    send_code_request: Callable[..., Awaitable[object]]
+
+    async def start(
+        self,
+        phone: str,
+        *,
+        password: Callable[[], str],
+        code_callback: Callable[[], str],
+    ) -> object: ...
+
+
+async def _code_sign_in(client: _CodeClient, phone: str) -> None:
+    _watch_delivery(client)
+
+    def _code() -> str:
+        return input("Код из Telegram: ")
+
+    def _password() -> str:
+        return getpass.getpass("Пароль 2FA: ")
+
+    await client.start(phone, password=_password, code_callback=_code)
+
+
+def describe_sent_code(sent: object) -> str:
+    """Куда Telegram положил код. Хеш кода в строку не входит.
+
+    Args:
+        sent: Ответ `auth.sendCode`.
+
+    Returns:
+        Одна строка для stderr.
+    """
+    kind = getattr(sent, "type", None)
+    if kind is None:
+        return f"Telegram не описал отправку кода: {type(sent).__name__}."
+    template = _SENT_CODE.get(type(kind).__name__)
+    if template is None:
+        return f"Telegram ответил типом {type(kind).__name__}."
+    return template.format_map(_sent_fields(kind))
+
+
+def _watch_delivery(client: object) -> None:
+    request = getattr(client, "send_code_request", None)
+    if not callable(request):
+        return
+    send = cast("Callable[..., Awaitable[object]]", request)
+
+    async def _logged(phone: str, **kwargs: object) -> object:
+        sent = await send(phone, **kwargs)
+        sys.stderr.write(f"{describe_sent_code(sent)}\n")
+        return sent
+
+    cast("_CodeClient", client).send_code_request = _logged
+
+
+def _sent_fields(kind: object) -> dict[str, object]:
+    fields = ("length", "email_pattern", "url", "pattern", "prefix", "beginning")
+    return {name: getattr(kind, name, None) or "" for name in fields}
+
+
+_SENT_CODE = {
+    "SentCodeTypeApp": "Код в приложении, чат «Telegram». Длина {length}.",
+    "SentCodeTypeSms": "Код по SMS. Длина {length}.",
+    "SentCodeTypeCall": "Код продиктует звонок. Длина {length}.",
+    "SentCodeTypeFirebaseSms": "Код через Firebase SMS. Длина {length}.",
+    "SentCodeTypeEmailCode": "Код на почту {email_pattern}. Длина {length}.",
+    "SentCodeTypeSetUpEmailRequired": "Код не отправлен: для входа нужна почта.",
+    "SentCodeTypeFragmentSms": "Код через Fragment: {url}.",
+    "SentCodeTypeFlashCall": "Код входящим звонком, шаблон {pattern}.",
+    "SentCodeTypeMissedCall": "Код пропущенным звонком, префикс {prefix}, длина {length}.",
+    "SentCodeTypeSmsWord": "Код — слово в SMS, начало «{beginning}».",
+    "SentCodeTypeSmsPhrase": "Код — фраза в SMS, начало «{beginning}».",
+}
+
+
+async def _qr_sign_in(client: _QrClient) -> None:
+    login = await client.qr_login()
+    _show_qr(login.url)
+    try:
+        await login.wait()
+    except TimeoutError:
+        message = "QR-код истёк до сканирования."
+        hint = f"Снова выполните {_SETUP} и отсканируйте код с телефона."
+        raise SummaryError(message, hint, ErrorCode.NO_SESSION) from None
+    except SessionPasswordNeededError:
+        await client.sign_in(password=getpass.getpass("Пароль 2FA: "))
+
+
+def _show_qr(url: str) -> None:
+    sys.stderr.write(
+        "На телефоне, где уже открыт этот аккаунт: "
+        "Настройки → Устройства → Подключить устройство.\n"
+        f"{url}\n",
+    )
+    image = qrcode.QRCode(border=1)
+    image.add_data(url)
+    image.make(fit=True)
+    image.print_ascii(out=sys.stderr, invert=True)
 
 
 def _require_complete(values: dict[str, str]) -> None:
@@ -239,19 +398,14 @@ def _translated_auth_errors() -> Iterator[None]:
         message = "Этот номер заблокирован в Telegram."
         hint = "Нужен другой аккаунт."
         raise SummaryError(message, hint, ErrorCode.NO_CREDENTIALS) from None
+    except PasswordHashInvalidError:
+        message = "Telegram отклонил пароль 2FA."
+        hint = f"Снова выполните {_SETUP} и введите облачный пароль."
+        raise SummaryError(message, hint, ErrorCode.NO_CREDENTIALS) from None
     except FloodWaitError as exc:
         hint = f"Подождите и снова выполните {_SETUP}. Секреты на диске уже сохранены."
         raise flood_wait(exc.seconds, hint) from None
 
 
 def _write_private(path: Path, text: str) -> None:
-    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp = Path(name)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-        tmp.replace(path)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
+    replace_text(path, text, mode=0o600)

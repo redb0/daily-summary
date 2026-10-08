@@ -1,6 +1,5 @@
 """Сбор сессий Cursor из JSONL-транскриптов."""
 
-import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -8,10 +7,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from app.collectors.replies import agent_role, json_object, truncate_replies
 from app.config import Config
 from app.summary.models import TranscriptMessage, TranscriptSession, Window
 
-_Role = Literal["user", "assistant"]
 # Cursor подмешивает их в промпт. Содержимое — не слова пользователя.
 _SERVICE_TAGS = (
     "agent_skills",
@@ -97,25 +96,15 @@ def _collect_file(path: Path, config: Config) -> tuple[TranscriptSession, str | 
         return None
     # root / project / agent-transcripts / <uuid> / <uuid>.jsonl
     project = path.parents[2].name
-    kept, note = _truncate(messages, config, project=project, session_id=path.stem)
+    kept, note = truncate_replies(
+        messages,
+        head=config.transcripts.head_messages,
+        tail=config.transcripts.tail_messages,
+        project=project,
+        session_id=path.stem,
+    )
     session = TranscriptSession(project=project, id=path.stem, messages=kept)
     return session, note
-
-
-def _truncate(
-    messages: list[TranscriptMessage],
-    config: Config,
-    *,
-    project: str,
-    session_id: str,
-) -> tuple[list[TranscriptMessage], str | None]:
-    head = config.transcripts.head_messages
-    tail = config.transcripts.tail_messages
-    if len(messages) <= head + tail:
-        return messages, None
-    tail_part = messages[-tail:] if tail else []
-    note = f"{project}: сессия {session_id} усечена до {head} первых и {tail} последних сообщений"
-    return [*messages[:head], *tail_part], note
 
 
 def _messages(path: Path) -> list[TranscriptMessage]:
@@ -146,21 +135,11 @@ def _payload(line: str) -> dict[str, object] | None:
     stripped = line.strip()
     if stripped == "":
         return None
-    try:
-        parsed: object = json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(parsed, dict):
-        return {str(key): value for key, value in parsed.items()}
-    return None
+    return json_object(stripped)
 
 
-def _role(payload: dict[str, object]) -> _Role | None:
-    match payload.get("role"):
-        case "user" | "assistant" as role:
-            return role
-        case _:
-            return None
+def _role(payload: dict[str, object]) -> Literal["user", "assistant"] | None:
+    return agent_role(payload.get("role"))
 
 
 def _text(message: object) -> str:

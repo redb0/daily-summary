@@ -16,7 +16,11 @@ from telethon.tl.types import (
 from app.summary.models import TelegramMessage
 
 
-def dump_messages(messages: list[object]) -> list[TelegramMessage]:
+def dump_messages(
+    messages: list[object],
+    *,
+    forward_names: dict[int, str] | None = None,
+) -> list[TelegramMessage]:
     """Собрать сообщения дня: альбом — одна запись, служебные события пропущены.
 
     Порядок — от раннего к позднему. Пересланное получает пометку об авторстве.
@@ -24,17 +28,35 @@ def dump_messages(messages: list[object]) -> list[TelegramMessage]:
 
     Args:
         messages: Сообщения Telethon в любом порядке.
+        forward_names: Имена по id из `fwd_from.from_id`, если в сообщении нет строки.
 
     Returns:
         Записи дампа без пустых и служебных сообщений.
     """
+    names = {} if forward_names is None else forward_names
     visible = [message for message in messages if not _is_service(message)]
     rendered: list[TelegramMessage] = []
     for group in _chronological(group_albums(visible)):
-        item = _render_group(group)
+        item = _render_group(group, names)
         if item is not None:
             rendered.append(item)
     return rendered
+
+
+def forward_peer_id(msg: object) -> int | None:
+    """Id автора пересылки, если имя ещё не лежит в самом сообщении.
+
+    Args:
+        msg: Сообщение.
+
+    Returns:
+        `user_id`, `channel_id` или `chat_id`. `None`, если пересылки нет
+        или имя уже записано в `from_name` / `post_author`.
+    """
+    forwarded = getattr(msg, "fwd_from", None)
+    if forwarded is None or _forward_label(forwarded) != "":
+        return None
+    return _peer_id(getattr(forwarded, "from_id", None))
 
 
 def media_type(msg: object) -> str | None:
@@ -137,9 +159,9 @@ def _chronological(groups: list[list[object]]) -> list[list[object]]:
     return sorted(groups, key=lambda group: min(_sort_key(message) for message in group))
 
 
-def _render_group(group: list[object]) -> TelegramMessage | None:
+def _render_group(group: list[object], names: dict[int, str]) -> TelegramMessage | None:
     ordered = sorted(group, key=_sort_key)
-    body = _body(ordered)
+    body = _body(ordered, names)
     if body == "":
         return None
     return TelegramMessage(
@@ -149,14 +171,17 @@ def _render_group(group: list[object]) -> TelegramMessage | None:
     )
 
 
-def _body(messages: list[object]) -> str:
+def _body(messages: list[object], names: dict[int, str]) -> str:
     caption = next((_plain(message) for message in messages if _plain(message)), "")
     medias = [desc for desc in (media_desc(message) for message in messages) if desc]
     text = caption
     if medias:
         line = ", ".join(medias)
         text = f"{text}\n{line}" if text else line
-    forwarded = next((_forward_name(message) for message in messages if _forward_name(message)), "")
+    forwarded = next(
+        (name for message in messages if (name := _forward_name(message, names))),
+        "",
+    )
     if forwarded:
         return f"переслано от {forwarded}: {text}" if text else f"переслано от {forwarded}"
     return text
@@ -173,15 +198,25 @@ def _plain(msg: object) -> str:
     return text.strip()
 
 
-def _forward_name(msg: object) -> str:
+def _forward_name(msg: object, names: dict[int, str]) -> str:
     forwarded = getattr(msg, "fwd_from", None)
     if forwarded is None:
         return ""
+    label = _forward_label(forwarded)
+    if label != "":
+        return label
+    peer_id = _peer_id(getattr(forwarded, "from_id", None))
+    if peer_id is not None and peer_id in names:
+        return names[peer_id]
+    return "неизвестного автора"
+
+
+def _forward_label(forwarded: object) -> str:
     for attr in ("from_name", "post_author"):
         value = getattr(forwarded, attr, None)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    return "неизвестного автора"
+    return ""
 
 
 def _author(msg: object) -> str | None:
@@ -226,9 +261,10 @@ def _file_name(document: object) -> str | None:
 
 
 def _peer_id(peer: object) -> int | None:
-    user_id = getattr(peer, "user_id", None)
-    if isinstance(user_id, int):
-        return user_id
+    for attr in ("user_id", "channel_id", "chat_id"):
+        value = getattr(peer, attr, None)
+        if isinstance(value, int):
+            return value
     return None
 
 

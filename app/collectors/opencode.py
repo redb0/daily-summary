@@ -1,6 +1,5 @@
 """Сбор сессий OpenCode из SQLite. Сеть и живая база здесь не открываются."""
 
-import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -8,10 +7,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from app.collectors.replies import agent_role, json_object, truncate_replies
 from app.config import Config
 from app.summary.models import TranscriptMessage, TranscriptSession, Window
 
-_Role = Literal["user", "assistant"]
 _MESSAGES = """
 SELECT session.id, session.directory, message.id, message.data
 FROM message
@@ -115,7 +114,7 @@ def _sessions(
     for session_id in order:
         directory = directories[session_id]
         messages = messages_by_session[session_id]
-        kept, note = _truncate(
+        kept, note = truncate_replies(
             messages,
             head=config.opencode.head_messages,
             tail=config.opencode.tail_messages,
@@ -164,15 +163,11 @@ def _message(data: str, text: str) -> TranscriptMessage | None:
     return TranscriptMessage(role=role, text=text)
 
 
-def _role(data: str) -> _Role | None:
+def _role(data: str) -> Literal["user", "assistant"] | None:
     parsed = _object(data)
     if parsed is None:
         return None
-    match parsed.get("role"):
-        case "user" | "assistant" as role:
-            return role
-        case _:
-            return None
+    return agent_role(parsed.get("role"))
 
 
 def _part_text(data: str) -> str:
@@ -186,25 +181,4 @@ def _part_text(data: str) -> str:
 
 
 def _object(data: str) -> dict[str, object] | None:
-    try:
-        parsed: object = json.loads(data)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(parsed, dict):
-        return {str(key): value for key, value in parsed.items()}
-    return None
-
-
-def _truncate(
-    messages: list[TranscriptMessage],
-    *,
-    head: int,
-    tail: int,
-    project: str,
-    session_id: str,
-) -> tuple[list[TranscriptMessage], str | None]:
-    if len(messages) <= head + tail:
-        return messages, None
-    tail_part = messages[-tail:] if tail else []
-    note = f"{project}: сессия {session_id} усечена до {head} первых и {tail} последних сообщений"
-    return [*messages[:head], *tail_part], note
+    return json_object(data)
