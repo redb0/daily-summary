@@ -131,6 +131,193 @@ def test_collect_writes_private_dump_and_prints_summary(
     )
 
 
+def test_collect_named_source_writes_only_that_dump(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    moment = datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, moment)
+    _commit(tmp_path / "repos" / "demo", "добавил заметку", moment)
+    config = _config_file(tmp_path)
+
+    exit_code = main(["collect", "git", "--date", "2026-10-05", "--config", str(config)])
+
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    git_path = day_dir / "git.json"
+    payload = json.loads(git_path.read_text(encoding="utf-8"))
+    assert (
+        exit_code,
+        sorted(path.name for path in day_dir.iterdir()),
+        payload["window"],
+        payload["repos"][0]["commits"][0]["message"],
+        capsys.readouterr().out,
+    ) == (
+        0,
+        ["git.json"],
+        {
+            "from": "2026-10-05T00:00:00+03:00",
+            "to": "2026-10-05T23:59:59.999999+03:00",
+        },
+        "добавил заметку",
+        (
+            f"{day_dir}\n"
+            "дата: 2026-10-05\n"
+            f"байты: {git_path.stat().st_size}\n"
+            "порог: 100000\n"
+            "порог превышен: нет\n"
+            "git: ok, репозиториев: 1, коммитов: 1\n"
+            "transcripts: не собран, сессий: 0\n"
+            "opencode: не собран, сессий: 0\n"
+            "telegram: не собран, чатов: 0, unlisted: 0\n"
+        ),
+    )
+
+
+def test_collect_one_source_again_replaces_only_its_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    morning = datetime(2026, 10, 5, 10, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, morning)
+    _session(tmp_path / "transcripts", morning.replace(hour=9), text="утром")
+    repo = tmp_path / "repos" / "demo"
+    _commit(repo, "утром", morning.replace(hour=9))
+    _commit(repo, "вечером", morning.replace(hour=17))
+    config = _config_file(tmp_path)
+
+    morning_code = main(["collect", "git", "--config", str(config)])
+    transcripts_code = main(["collect", "transcripts", "--config", str(config)])
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    kept = (day_dir / "transcripts.json").read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    _freeze(monkeypatch, morning.replace(hour=18))
+    evening_code = main(["collect", "git", "--config", str(config)])
+
+    git_path = day_dir / "git.json"
+    transcripts_path = day_dir / "transcripts.json"
+    git_payload = json.loads(git_path.read_text(encoding="utf-8"))
+    messages = [commit["message"] for commit in git_payload["repos"][0]["commits"]]
+    total = git_path.stat().st_size + transcripts_path.stat().st_size
+    assert (
+        morning_code,
+        transcripts_code,
+        evening_code,
+        sorted(path.name for path in day_dir.iterdir()),
+        transcripts_path.read_text(encoding="utf-8"),
+        json.loads(kept)["window"]["to"],
+        git_payload["window"]["to"],
+        messages,
+        capsys.readouterr().out,
+    ) == (
+        0,
+        0,
+        0,
+        ["git.json", "transcripts.json"],
+        kept,
+        "2026-10-05T10:00:00+03:00",
+        "2026-10-05T18:00:00+03:00",
+        ["утром", "вечером"],
+        (
+            f"{day_dir}\n"
+            "дата: 2026-10-05\n"
+            f"байты: {total}\n"
+            "порог: 100000\n"
+            "порог превышен: нет\n"
+            "git: ok, репозиториев: 1, коммитов: 2\n"
+            "transcripts: ok, сессий: 1\n"
+            "opencode: не собран, сессий: 0\n"
+            "telegram: не собран, чатов: 0, unlisted: 0\n"
+        ),
+    )
+
+
+def test_unknown_source_name_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    _freeze(monkeypatch, datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW))
+    config = _config_file(tmp_path)
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    day_dir.mkdir(parents=True)
+    git = day_dir / "git.json"
+    git.write_text("оставить", encoding="utf-8")
+    before = git.read_bytes()
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["collect", "slack", "--date", "2026-10-05", "--config", str(config)])
+
+    assert (
+        exit_info.value.code,
+        git.read_bytes(),
+        sorted(path.name for path in day_dir.iterdir()),
+    ) == (
+        2,
+        before,
+        ["git.json"],
+    )
+
+
+def test_full_collect_after_partial_rewrites_every_dump(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    morning = datetime(2026, 10, 5, 10, 0, tzinfo=_MOSCOW)
+    _freeze(monkeypatch, morning)
+    repo = tmp_path / "repos" / "demo"
+    _commit(repo, "утром", morning.replace(hour=9))
+    _commit(repo, "вечером", morning.replace(hour=17))
+    config = _config_file(tmp_path)
+
+    partial_code = main(["collect", "git", "--config", str(config)])
+    partial = _stored(tmp_path, "2026-10-05", "git")
+
+    _freeze(monkeypatch, morning.replace(hour=18))
+    full_code = main(["collect", "--config", str(config)])
+
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    evening = _stored(tmp_path, "2026-10-05", "git")
+    transcripts = _stored(tmp_path, "2026-10-05", "transcripts")
+    opencode = _stored(tmp_path, "2026-10-05", "opencode")
+    telegram = _stored(tmp_path, "2026-10-05", "telegram")
+    partial_messages = [commit["message"] for commit in partial["repos"][0]["commits"]]
+    evening_messages = [commit["message"] for commit in evening["repos"][0]["commits"]]
+    assert (
+        partial_code,
+        partial["window"]["to"],
+        partial_messages,
+        full_code,
+        sorted(path.name for path in day_dir.iterdir()),
+        evening["window"]["to"],
+        evening_messages,
+        (
+            transcripts["status"],
+            transcripts["window"]["to"],
+            opencode["status"],
+            telegram["status"],
+        ),
+    ) == (
+        0,
+        "2026-10-05T10:00:00+03:00",
+        ["утром"],
+        0,
+        ["git.json", "opencode.json", "telegram.json", "transcripts.json"],
+        "2026-10-05T18:00:00+03:00",
+        ["утром", "вечером"],
+        ("empty", "2026-10-05T18:00:00+03:00", "disabled", "disabled"),
+    )
+
+
 def test_collect_default_window_stops_at_now_and_date_today_covers_the_day(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

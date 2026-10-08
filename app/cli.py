@@ -16,7 +16,9 @@ from app.errors import SummaryError
 from app.notes.writer import write_note
 from app.summary.collect import (
     RELATIVE_DAYS,
+    SOURCES,
     CollectedDay,
+    SourceName,
     collect_and_store,
     local_now,
     resolve_day,
@@ -44,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=False)
     collect = commands.add_parser("collect", help="Собрать сырой дамп за день.")
+    collect.add_argument("source", nargs="?", choices=SOURCES, default=None)
     collect.add_argument("--date", type=_day_token, default=None)
     collect.add_argument("--config", type=Path, default=None)
     write = commands.add_parser("write", help="Записать блок итогов в ежедневную заметку.")
@@ -116,7 +119,7 @@ def _stdin_body(value: str) -> str:
 def _dispatch(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     if args.command == "collect":
-        return _run_collect(config, args.date)
+        return _run_collect(config, args.date, args.source)
     if args.command == "write":
         return _run_write(config, args.date, apply=args.apply)
     if args.command == "init":
@@ -124,8 +127,8 @@ def _dispatch(args: argparse.Namespace) -> int:
     return _run_chats(config)
 
 
-def _run_collect(config: Config, token: str | None) -> int:
-    day = collect_and_store(config, token, progress=_progress)
+def _run_collect(config: Config, token: str | None, source: SourceName | None) -> int:
+    day = collect_and_store(config, token, progress=_progress, source=source)
     sys.stdout.write(_report(day, threshold=config.summary.two_stage_threshold_bytes))
     return 0
 
@@ -186,7 +189,7 @@ _STATUS = {
 def _report(day: CollectedDay, *, threshold: int) -> str:
     lines = [
         str(day.directory) if day.directory is not None else _NOT_KEPT,
-        f"дата: {day.git.date.isoformat()}",
+        f"дата: {_day_date(day).isoformat()}",
         f"байты: {day.total_bytes}",
         f"порог: {threshold}",
         f"порог превышен: {_exceeded(day.total_bytes, threshold)}",
@@ -199,34 +202,47 @@ def _report(day: CollectedDay, *, threshold: int) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _day_date(day: CollectedDay) -> date:
+    dump = day.git or day.transcripts or day.opencode or day.telegram
+    if dump is None:
+        message = "в дне нет ни одного дампа"
+        raise RuntimeError(message)
+    return dump.date
+
+
 def _exceeded(total: int, threshold: int) -> str:
     if total > threshold:
         return "да"
     return "нет"
 
 
-def _git_line(dump: GitDump) -> str:
+def _git_line(dump: GitDump | None) -> str:
+    if dump is None:
+        return "git: не собран, репозиториев: 0, коммитов: 0"
     commits = sum(len(repo.commits) for repo in dump.repos)
     status = _STATUS[dump.status]
     return f"git: {status}, репозиториев: {len(dump.repos)}, коммитов: {commits}"
 
 
-def _session_line(name: str, dump: SessionDump) -> str:
+def _session_line(name: str, dump: SessionDump | None) -> str:
+    if dump is None:
+        return f"{name}: не собран, сессий: 0"
     return f"{name}: {_STATUS[dump.status]}, сессий: {len(dump.sessions)}"
 
 
-def _telegram_line(dump: TelegramDump) -> str:
+def _telegram_line(dump: TelegramDump | None) -> str:
+    if dump is None:
+        return "telegram: не собран, чатов: 0, unlisted: 0"
     status = _STATUS[dump.status]
     return f"telegram: {status}, чатов: {len(dump.chats)}, unlisted: {dump.unlisted_active}"
 
 
 def _notes(day: CollectedDay) -> list[str]:
-    return [
-        *day.git.truncations,
-        *day.transcripts.truncations,
-        *day.opencode.truncations,
-        *day.telegram.truncations,
-    ]
+    notes: list[str] = []
+    for dump in (day.git, day.transcripts, day.opencode, day.telegram):
+        if dump is not None:
+            notes.extend(dump.truncations)
+    return notes
 
 
 def _print_error(error: SummaryError) -> None:

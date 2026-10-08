@@ -1,10 +1,10 @@
 """Сборка сырых дампов: окно дня, источники, маскирование и каталог вне vault."""
 
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 from zoneinfo import ZoneInfo
 
 from app.atomic import replace_text
@@ -16,6 +16,7 @@ from app.config import Config
 from app.errors import ErrorCode, SummaryError
 from app.summary.masking import mask_secrets
 from app.summary.models import (
+    Dump,
     GitDump,
     SessionDump,
     SourceStatus,
@@ -27,6 +28,9 @@ from app.summary.models import (
 _TODAY = "today"
 _YESTERDAY = "yesterday"
 RELATIVE_DAYS = frozenset({_TODAY, _YESTERDAY})
+type SourceName = Literal["git", "transcripts", "opencode", "telegram"]
+SOURCES: tuple[SourceName, ...] = ("git", "transcripts", "opencode", "telegram")
+type _Loaded = tuple[GitDump | None, SessionDump | None, SessionDump | None, TelegramDump | None]
 
 
 def local_now(timezone_name: str) -> datetime:
@@ -42,21 +46,18 @@ def local_now(timezone_name: str) -> datetime:
 
 
 class CollectedDay(NamedTuple):
-    """Четыре дампа полного сбора и каталог, если ретенция его оставила."""
+    """Дампы, которые лежат в каталоге, и сам каталог, если ретенция его оставила.
+
+    Нет файла — поле `None`: этот источник не собирали. Если ретенция удалила
+    каталог сразу после записи, поля — дампы этого прохода, их уже не прочитать.
+    """
 
     directory: Path | None
     total_bytes: int
-    git: GitDump
-    transcripts: SessionDump
-    opencode: SessionDump
-    telegram: TelegramDump
-
-
-class _Dumps(NamedTuple):
-    git: GitDump
-    transcripts: SessionDump
-    opencode: SessionDump
-    telegram: TelegramDump
+    git: GitDump | None
+    transcripts: SessionDump | None
+    opencode: SessionDump | None
+    telegram: TelegramDump | None
 
 
 class _When(NamedTuple):
@@ -72,29 +73,39 @@ def collect_and_store(
     day_text: str | None,
     *,
     progress: Callable[[str], None] | None = None,
+    source: SourceName | None = None,
 ) -> CollectedDay:
-    """Собрать день и записать четыре дампа в каталог.
+    """Собрать день и записать дампы в каталог.
 
-    Каталоги создаются с правами 700, файлы — 600. После записи удаляются
-    каталоги дней и одиночные JSON старше `state.raw_retention_days`
-    относительно сегодняшнего дня, включая только что записанный день, если
-    его дата тоже старше окна. Содержимое при удалении не читается.
-    `progress` получает ход Telegram, пока обходятся чаты и диалоги.
+    Без `source` пишутся все четыре файла. С именем переписывается только он:
+    остальные не создаются и не затираются. Каталоги — права 700, файлы — 600.
+    После записи удаляются каталоги дней и одиночные JSON старше
+    `state.raw_retention_days` относительно сегодняшнего дня, включая только
+    что записанный день, если его дата тоже старше окна. Содержимое при
+    удалении не читается. `progress` получает ход Telegram, пока обходятся
+    чаты и диалоги. Сводка читает каталог, который остался после ретенции.
 
     Args:
         config: Загруженные настройки.
         day_text: `None` — сегодня до текущего момента. `today`, `yesterday`
             или `YYYY-MM-DD` — календарный день целиком.
         progress: Куда писать ход Telegram. `None` — молчать.
+        source: Имя одного источника. `None` — полный сбор.
 
     Returns:
-        Каталог дня, если он остался после ретенции, сумма размеров файлов
-        и четыре дампа. У каждого дампа своё окно и свой `bytes`.
+        Каталог дня, если он остался после ретенции, сумма размеров лежащих
+        файлов и дамп на каждый существующий файл. У дампа своё окно.
     """
     now = local_now(config.notes.timezone)
     day, window = _resolve_window(day_text, now=now)
-    dumps = _assemble(config, day, window, generated_at=now, progress=progress)
-    directory, total_bytes = _store(config, day, dumps, today=now.date())
+    written = _collect(
+        config,
+        _When(day, window, now),
+        source=source,
+        progress=progress,
+    )
+    directory, total_bytes, loaded = _store(config, day, written, today=now.date())
+    dumps = loaded if loaded is not None else _kept(written)
     return CollectedDay(directory, total_bytes, *dumps)
 
 
@@ -132,22 +143,44 @@ def _include_uncommitted(day: date, *, generated_at: datetime) -> bool:
     return day == generated_at.date()
 
 
-def _assemble(
+def _collect(
     config: Config,
-    day: date,
-    window: Window,
+    when: _When,
     *,
-    generated_at: datetime,
+    source: SourceName | None,
     progress: Callable[[str], None] | None,
-) -> _Dumps:
-    when = _When(day, window, generated_at)
-    include_uncommitted = _include_uncommitted(day, generated_at=generated_at)
-    return _Dumps(
-        _with_size(_mask_model(_git_dump(config, when, include_uncommitted=include_uncommitted))),
-        _with_size(_mask_model(_transcript_dump(config, when))),
-        _with_size(_mask_model(_opencode_dump(config, when))),
-        _with_size(_mask_model(_telegram_dump(config, when, progress=progress))),
-    )
+) -> dict[SourceName, Dump]:
+    names: tuple[SourceName, ...] = SOURCES if source is None else (source,)
+    include_uncommitted = _include_uncommitted(when.day, generated_at=when.generated_at)
+    return {
+        name: _one(
+            config,
+            when,
+            name,
+            include_uncommitted=include_uncommitted,
+            progress=progress,
+        )
+        for name in names
+    }
+
+
+def _one(
+    config: Config,
+    when: _When,
+    source: SourceName,
+    *,
+    include_uncommitted: bool,
+    progress: Callable[[str], None] | None,
+) -> Dump:
+    if source == "git":
+        return _with_size(
+            _mask_model(_git_dump(config, when, include_uncommitted=include_uncommitted)),
+        )
+    if source == "transcripts":
+        return _with_size(_mask_model(_transcript_dump(config, when)))
+    if source == "opencode":
+        return _with_size(_mask_model(_opencode_dump(config, when)))
+    return _with_size(_mask_model(_telegram_dump(config, when, progress=progress)))
 
 
 def _git_dump(config: Config, when: _When, *, include_uncommitted: bool) -> GitDump:
@@ -277,29 +310,57 @@ def _with_size[D: (GitDump, SessionDump, TelegramDump)](dump: D) -> D:
 def _store(
     config: Config,
     day: date,
-    dumps: _Dumps,
+    written: Mapping[SourceName, Dump],
     *,
     today: date,
-) -> tuple[Path | None, int]:
+) -> tuple[Path | None, int, _Loaded | None]:
     state_dir = config.state.dir
     _private_dir(state_dir)
     raw_dir = state_dir / "raw"
     _private_dir(raw_dir)
     day_dir = raw_dir / day.isoformat()
     _private_dir(day_dir)
-    written = (
-        ("git", dumps.git),
-        ("transcripts", dumps.transcripts),
-        ("opencode", dumps.opencode),
-        ("telegram", dumps.telegram),
-    )
-    for name, dump in written:
+    for name, dump in written.items():
         _write_private(day_dir / f"{name}.json", render_dump(dump))
-    total = sum((day_dir / f"{name}.json").stat().st_size for name, _dump in written)
+    total = _total_bytes(day_dir)
     _purge(raw_dir, today=today, retention_days=config.state.raw_retention_days)
     if day_dir.is_dir():
-        return day_dir, total
-    return None, total
+        return day_dir, total, _load(day_dir)
+    return None, total, None
+
+
+def _total_bytes(day_dir: Path) -> int:
+    return sum(
+        path.stat().st_size for name in SOURCES if (path := day_dir / f"{name}.json").is_file()
+    )
+
+
+def _load(day_dir: Path) -> _Loaded:
+    return (
+        _read(day_dir / "git.json", GitDump),
+        _read(day_dir / "transcripts.json", SessionDump),
+        _read(day_dir / "opencode.json", SessionDump),
+        _read(day_dir / "telegram.json", TelegramDump),
+    )
+
+
+def _read[D: (GitDump, SessionDump, TelegramDump)](path: Path, kind: type[D]) -> D | None:
+    if not path.is_file():
+        return None
+    return kind.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _kept(written: Mapping[SourceName, Dump]) -> _Loaded:
+    git = written.get("git")
+    transcripts = written.get("transcripts")
+    opencode = written.get("opencode")
+    telegram = written.get("telegram")
+    return (
+        git if isinstance(git, GitDump) else None,
+        transcripts if isinstance(transcripts, SessionDump) else None,
+        opencode if isinstance(opencode, SessionDump) else None,
+        telegram if isinstance(telegram, TelegramDump) else None,
+    )
 
 
 def _private_dir(path: Path) -> None:
