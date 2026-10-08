@@ -21,3 +21,5 @@ wheels/
 # Редакторы
 .idea/
 .DS_Store
+
+.scratch/
