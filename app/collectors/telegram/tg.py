@@ -98,8 +98,7 @@ def require_session(session_file: Path) -> None:
         return
     message = f"Сессия Telegram не найдена: {session_file}"
     hint = (
-        f"Выполните {_SETUP} в своём терминале и выберите qr или code. "
-        "В чате агента вход зависнет."
+        f"Выполните {_SETUP} в своём терминале и выберите qr или code. В чате агента вход зависнет."
     )
     raise SummaryError(message, hint, ErrorCode.NO_SESSION)
 
