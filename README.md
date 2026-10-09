@@ -1,5 +1,9 @@
 # experience
 
+[![tests](https://github.com/redb0/daily-summary/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/redb0/daily-summary/actions/workflows/test.yaml)
+[![coverage](https://codecov.io/gh/redb0/daily-summary/branch/main/graph/badge.svg)](https://codecov.io/gh/redb0/daily-summary)
+![python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
+
 Накопление рабочего опыта: что сделано и какие решения приняты.
 
 ## daily-summary

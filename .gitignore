@@ -12,6 +12,7 @@ wheels/
 .mypy_cache/
 .pytest_cache/
 .coverage
+coverage.xml
 
 # Секреты. Рабочее место конфига — ~/.config/daily-summary/.env,
 # но строка на случай запуска из каталога проекта не повредит.
