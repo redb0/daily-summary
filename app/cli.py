@@ -12,7 +12,7 @@ from pathlib import Path
 from app.collectors.telegram.chats import load_chats
 from app.collectors.telegram.init import run_init
 from app.config import Config, load_config
-from app.errors import SummaryError
+from app.errors import ErrorCode, SummaryError
 from app.notes.writer import write_note
 from app.summary.collect import (
     RELATIVE_DAYS,
@@ -24,8 +24,8 @@ from app.summary.collect import (
     local_now,
     resolve_day,
 )
-from app.summary.models import GitDump, SessionDump, SourceStatus, TelegramDump
-from app.summary.show import render_git, render_sessions, render_telegram
+from app.summary.models import Dump, GitDump, SessionDump, SourceStatus, TelegramDump, Window
+from app.summary.show import render_git, render_sessions, render_telegram, visible_truncation
 
 DISTRIBUTION = "daily-summary"
 _NOT_KEPT = "дамп не сохранён: дата старше ретенции"
@@ -157,35 +157,18 @@ def _run_show(config: Config, token: str | None, source: SourceName | None) -> i
 
 
 def _source_text(source: SourceName, day: CollectedDay) -> str:
-    missing = _missing_text(source, day)
-    if missing is not None:
-        return missing
-    return _body(source, day)
+    dump = _dumps(day)[source]
+    if dump is None:
+        return _source_line(source, None) + "\n"
+    return _body(dump)
 
 
-def _missing_text(source: SourceName, day: CollectedDay) -> str | None:
-    if source == "git" and day.git is None:
-        return _git_line(None) + "\n"
-    if source == "transcripts" and day.transcripts is None:
-        return _session_line("transcripts", None) + "\n"
-    if source == "opencode" and day.opencode is None:
-        return _session_line("opencode", None) + "\n"
-    if source == "telegram" and day.telegram is None:
-        return _telegram_line(None) + "\n"
-    return None
-
-
-def _body(source: SourceName, day: CollectedDay) -> str:
-    if source == "git" and day.git is not None:
-        return render_git(day.git)
-    if source == "transcripts" and day.transcripts is not None:
-        return render_sessions(day.transcripts)
-    if source == "opencode" and day.opencode is not None:
-        return render_sessions(day.opencode)
-    if source == "telegram" and day.telegram is not None:
-        return render_telegram(day.telegram)
-    message = "в дне нет дампа источника"
-    raise RuntimeError(message)
+def _body(dump: Dump) -> str:
+    if isinstance(dump, GitDump):
+        return render_git(dump)
+    if isinstance(dump, TelegramDump):
+        return render_telegram(dump)
+    return render_sessions(dump)
 
 
 def _progress(line: str) -> None:
@@ -248,52 +231,62 @@ def _report(
     empty_date: date | None = None,
 ) -> str:
     shown = _day_date(day, empty_date)
-    shared = _same_window(day)
+    shared = _shared_window(day)
     lines = [
         *_heading(day),
         f"дата: {shown.isoformat()}",
         f"байты: {day.total_bytes}",
         f"порог: {threshold}",
         f"порог превышен: {_exceeded(day.total_bytes, threshold)}",
-        _git_line(day.git) + _window_suffix(day.git, shared=shared),
-        _session_line("transcripts", day.transcripts)
-        + _window_suffix(day.transcripts, shared=shared),
-        _session_line("opencode", day.opencode) + _window_suffix(day.opencode, shared=shared),
-        _telegram_line(day.telegram) + _window_suffix(day.telegram, shared=shared),
-        *_notes(day),
     ]
+    if shared is not None:
+        lines.append(_window_text(shared))
+    lines.extend(
+        _source_line(name, dump) + _window_suffix(dump, shared=shared is not None)
+        for name, dump in _dumps(day).items()
+    )
+    lines.extend(_notes(day))
     return "\n".join(lines) + "\n"
 
 
-def _same_window(day: CollectedDay) -> bool:
-    windows = [
-        dump.window
-        for dump in (day.git, day.transcripts, day.opencode, day.telegram)
-        if dump is not None
-    ]
-    return all(item == windows[0] for item in windows)
+def _dumps(day: CollectedDay) -> dict[SourceName, Dump | None]:
+    return {
+        "git": day.git,
+        "transcripts": day.transcripts,
+        "opencode": day.opencode,
+        "telegram": day.telegram,
+    }
 
 
-def _window_suffix(dump: GitDump | SessionDump | TelegramDump | None, *, shared: bool) -> str:
+def _shared_window(day: CollectedDay) -> Window | None:
+    windows = [dump.window for dump in _dumps(day).values() if dump is not None]
+    if not windows or any(item != windows[0] for item in windows):
+        return None
+    return windows[0]
+
+
+def _window_text(window: Window) -> str:
+    return f"окно: {window.from_.isoformat()}..{window.to.isoformat()}"
+
+
+def _window_suffix(dump: Dump | None, *, shared: bool) -> str:
     if shared or dump is None:
         return ""
-    start = dump.window.from_.isoformat()
-    end = dump.window.to.isoformat()
-    return f", окно: {start}..{end}"
+    return ", " + _window_text(dump.window)
 
 
 def _heading(day: CollectedDay) -> list[str]:
     if day.directory is not None:
         return [str(day.directory)]
-    if day.git or day.transcripts or day.opencode or day.telegram:
+    if any(dump is not None for dump in _dumps(day).values()):
         return [_NOT_KEPT]
     return []
 
 
 def _day_date(day: CollectedDay, fallback: date | None) -> date:
-    dump = day.git or day.transcripts or day.opencode or day.telegram
-    if dump is not None:
-        return dump.date
+    for dump in _dumps(day).values():
+        if dump is not None:
+            return dump.date
     if fallback is not None:
         return fallback
     message = "в дне нет ни одного дампа"
@@ -306,32 +299,50 @@ def _exceeded(total: int, threshold: int) -> str:
     return "нет"
 
 
+def _source_line(name: SourceName, dump: Dump | None) -> str:
+    if name == "git":
+        return _git_line(dump if isinstance(dump, GitDump) else None)
+    if name == "telegram":
+        return _telegram_line(dump if isinstance(dump, TelegramDump) else None)
+    return _session_line(name, dump if isinstance(dump, SessionDump) else None)
+
+
+def _login_code(dump: GitDump | SessionDump | TelegramDump) -> str:
+    if dump.code in {ErrorCode.NO_SESSION, ErrorCode.NO_CREDENTIALS}:
+        return f", code: {dump.code}"
+    return ""
+
+
 def _git_line(dump: GitDump | None) -> str:
     if dump is None:
         return "git: не собран, репозиториев: 0, коммитов: 0"
     commits = sum(len(repo.commits) for repo in dump.repos)
-    status = _STATUS[dump.status]
-    return f"git: {status}, репозиториев: {len(dump.repos)}, коммитов: {commits}"
+    return (
+        f"git: {_STATUS[dump.status]}{_login_code(dump)}, "
+        f"репозиториев: {len(dump.repos)}, коммитов: {commits}"
+    )
 
 
 def _session_line(name: str, dump: SessionDump | None) -> str:
     if dump is None:
         return f"{name}: не собран, сессий: 0"
-    return f"{name}: {_STATUS[dump.status]}, сессий: {len(dump.sessions)}"
+    return f"{name}: {_STATUS[dump.status]}{_login_code(dump)}, сессий: {len(dump.sessions)}"
 
 
 def _telegram_line(dump: TelegramDump | None) -> str:
     if dump is None:
         return "telegram: не собран, чатов: 0, unlisted: 0"
-    status = _STATUS[dump.status]
-    return f"telegram: {status}, чатов: {len(dump.chats)}, unlisted: {dump.unlisted_active}"
+    return (
+        f"telegram: {_STATUS[dump.status]}{_login_code(dump)}, "
+        f"чатов: {len(dump.chats)}, unlisted: {dump.unlisted_active}"
+    )
 
 
 def _notes(day: CollectedDay) -> list[str]:
     notes: list[str] = []
-    for dump in (day.git, day.transcripts, day.opencode, day.telegram):
+    for dump in _dumps(day).values():
         if dump is not None:
-            notes.extend(dump.truncations)
+            notes.extend(visible_truncation(note) for note in dump.truncations)
     return notes
 
 

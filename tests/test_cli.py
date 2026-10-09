@@ -111,6 +111,7 @@ def test_collect_writes_private_dump_and_prints_summary(
             f"байты: {total}\n"
             "порог: 100000\n"
             "порог превышен: нет\n"
+            "окно: 2026-10-05T00:00:00+03:00..2026-10-05T23:59:59.999999+03:00\n"
             "git: ok, репозиториев: 1, коммитов: 1\n"
             "transcripts: ok, сессий: 1\n"
             "opencode: выключен, сессий: 0\n"
@@ -997,10 +998,7 @@ def test_collect_summary_prints_truncations_without_commit_text(
     day_dir = tmp_path / "state" / "raw" / "2026-10-05"
     commit = _stored(tmp_path, "2026-10-05", "git")["repos"][0]["commits"][0]
     total = sum(path.stat().st_size for path in day_dir.glob("*.json"))
-    note = (
-        f"demo: diff коммита {commit['sha']} снят из-за лимита "
-        "1 строк на день: оставлен только diffstat"
-    )
+    printed = "demo: diff коммита снят из-за лимита 1 строк на день: оставлен только diffstat"
     assert (
         exit_code,
         commit["message"],
@@ -1016,12 +1014,58 @@ def test_collect_summary_prints_truncations_without_commit_text(
             f"байты: {total}\n"
             "порог: 100000\n"
             "порог превышен: нет\n"
+            "окно: 2026-10-05T00:00:00+03:00..2026-10-05T23:59:59.999999+03:00\n"
             "git: ok, репозиториев: 1, коммитов: 1\n"
             "transcripts: пустой, сессий: 0\n"
             "opencode: выключен, сессий: 0\n"
             "telegram: выключен, чатов: 0, unlisted: 0\n"
-            f"{note}\n"
+            f"{printed}\n"
         ),
+    )
+
+
+def test_show_summary_drops_ids_from_truncations(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    _isolate_home(monkeypatch, home)
+    _freeze(monkeypatch, datetime(2026, 10, 5, 18, 0, tzinfo=_MOSCOW))
+    config = _config_file(tmp_path)
+    payload = _session_dump([("demo", "sess-1", [("user", "сделал штуку")])])
+    payload["truncations"] = [
+        "demo: сессия abc-123 усечена до 2 первых и 1 последних сообщений",
+        "Не удалось открыть чат 4242.",
+    ]
+    _plant(tmp_path, "transcripts", payload)
+    day_dir = tmp_path / "state" / "raw" / "2026-10-05"
+    written = (day_dir / "transcripts.json").read_text(encoding="utf-8")
+    total = (day_dir / "transcripts.json").stat().st_size
+
+    exit_code = main(["show", "--date", "2026-10-05", "--config", str(config)])
+
+    assert (
+        exit_code,
+        capsys.readouterr().out,
+        (day_dir / "transcripts.json").read_text(encoding="utf-8"),
+    ) == (
+        0,
+        (
+            f"{day_dir}\n"
+            "дата: 2026-10-05\n"
+            f"байты: {total}\n"
+            "порог: 100000\n"
+            "порог превышен: нет\n"
+            "окно: 2026-10-05T00:00:00+03:00..2026-10-05T18:00:00+03:00\n"
+            "git: не собран, репозиториев: 0, коммитов: 0\n"
+            "transcripts: ok, сессий: 1\n"
+            "opencode: не собран, сессий: 0\n"
+            "telegram: не собран, чатов: 0, unlisted: 0\n"
+            "demo: сессия усечена до 2 первых и 1 последних сообщений\n"
+            "Не удалось открыть чат.\n"
+        ),
+        written,
     )
 
 
@@ -1089,7 +1133,7 @@ def test_collect_marks_telegram_unavailable_and_keeps_other_sources(
         "unavailable",
         "NO_SESSION",
         reason,
-        "telegram: недоступен, чатов: 0, unlisted: 0",
+        "telegram: недоступен, code: NO_SESSION, чатов: 0, unlisted: 0",
     )
 
 
@@ -1142,7 +1186,7 @@ def test_collect_marks_missing_opencode_unavailable_and_keeps_commits(
         transcripts["status"],
         opencode["status"],
         opencode["reason"],
-        capsys.readouterr().out.splitlines()[7],
+        capsys.readouterr().out.splitlines()[8],
     ) == (
         0,
         "ok",
@@ -1200,6 +1244,7 @@ def test_collect_keeps_commits_when_a_transcript_cannot_be_read(
             f"байты: {total}\n"
             "порог: 100000\n"
             "порог превышен: нет\n"
+            "окно: 2026-10-05T00:00:00+03:00..2026-10-05T23:59:59.999999+03:00\n"
             "git: ok, репозиториев: 1, коммитов: 1\n"
             "transcripts: недоступен, сессий: 0\n"
             "opencode: выключен, сессий: 0\n"

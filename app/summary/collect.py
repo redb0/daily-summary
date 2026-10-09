@@ -4,7 +4,7 @@ import shutil
 from collections.abc import Callable, Mapping
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, Protocol
 from zoneinfo import ZoneInfo
 
 from app.atomic import replace_text
@@ -21,6 +21,7 @@ from app.summary.models import (
     SessionDump,
     SourceStatus,
     TelegramDump,
+    TranscriptSession,
     Window,
     render_dump,
 )
@@ -30,7 +31,22 @@ _YESTERDAY = "yesterday"
 RELATIVE_DAYS = frozenset({_TODAY, _YESTERDAY})
 type SourceName = Literal["git", "transcripts", "opencode", "telegram"]
 SOURCES: tuple[SourceName, ...] = ("git", "transcripts", "opencode", "telegram")
-type _Loaded = tuple[GitDump | None, SessionDump | None, SessionDump | None, TelegramDump | None]
+
+
+class StoredDumps(NamedTuple):
+    """Дампы каталога в порядке `SOURCES`. Нет файла — поле `None`."""
+
+    git: GitDump | None
+    transcripts: SessionDump | None
+    opencode: SessionDump | None
+    telegram: TelegramDump | None
+
+
+class _SessionCollection(Protocol):
+    """То, что сборщик сессий отдаёт в дамп: реплики и обрезки."""
+
+    sessions: list[TranscriptSession]
+    truncations: list[str]
 
 
 def local_now(timezone_name: str) -> datetime:
@@ -195,15 +211,21 @@ def _collect_source(
     include_uncommitted: bool,
     progress: Callable[[str], None] | None,
 ) -> Dump:
-    if source == "git":
-        return _with_size(
-            _mask_model(_git_dump(config, when, include_uncommitted=include_uncommitted)),
-        )
-    if source == "transcripts":
-        return _with_size(_mask_model(_transcript_dump(config, when)))
-    if source == "opencode":
-        return _with_size(_mask_model(_opencode_dump(config, when)))
-    return _with_size(_mask_model(_telegram_dump(config, when, progress=progress)))
+    collectors: dict[SourceName, Callable[[], Dump]] = {
+        "git": lambda: _git_dump(config, when, include_uncommitted=include_uncommitted),
+        "transcripts": lambda: _session_dump(
+            when,
+            enabled=True,
+            collect=lambda: collect_transcripts(config, when.window),
+        ),
+        "opencode": lambda: _session_dump(
+            when,
+            enabled=config.opencode.enabled,
+            collect=lambda: collect_opencode(config, when.window),
+        ),
+        "telegram": lambda: _telegram_dump(config, when, progress=progress),
+    }
+    return _with_size(_mask_model(collectors[source]()))
 
 
 def _git_dump(config: Config, when: _When, *, include_uncommitted: bool) -> GitDump:
@@ -218,27 +240,21 @@ def _git_dump(config: Config, when: _When, *, include_uncommitted: bool) -> GitD
     )
 
 
-def _transcript_dump(config: Config, when: _When) -> SessionDump:
+def _session_dump(
+    when: _When,
+    *,
+    enabled: bool,
+    collect: Callable[[], _SessionCollection],
+) -> SessionDump:
+    if not enabled:
+        return _status_dump(SessionDump, when, status=SourceStatus.DISABLED)
     try:
-        collected = collect_transcripts(config, when.window)
+        collected = collect()
     except (OSError, SummaryError) as exc:
         return _failed(SessionDump, exc, when)
     if not collected.sessions:
         return _status_dump(SessionDump, when, status=SourceStatus.EMPTY)
     return _status_dump(SessionDump, when, status=SourceStatus.OK).model_copy(
-        update={"sessions": collected.sessions, "truncations": list(collected.truncations)},
-    )
-
-
-def _opencode_dump(config: Config, when: _When) -> SessionDump:
-    if not config.opencode.enabled:
-        return _status_dump(SessionDump, when, status=SourceStatus.DISABLED)
-    try:
-        collected = collect_opencode(config, when.window)
-    except (OSError, SummaryError) as exc:
-        return _failed(SessionDump, exc, when)
-    status = SourceStatus.OK if collected.sessions else SourceStatus.EMPTY
-    return _status_dump(SessionDump, when, status=status).model_copy(
         update={"sessions": collected.sessions, "truncations": list(collected.truncations)},
     )
 
@@ -302,7 +318,7 @@ def _error_parts(exc: Exception) -> tuple[ErrorCode | None, str]:
     return None, reason
 
 
-def _mask_model[D: (GitDump, SessionDump, TelegramDump)](dump: D) -> D:
+def _mask_model(dump: Dump) -> Dump:
     payload = dump.model_dump(mode="json", by_alias=True, exclude_none=True)
     return type(dump).model_validate(_mask_value(payload))
 
@@ -317,7 +333,7 @@ def _mask_value(value: object) -> object:
     return value
 
 
-def _with_size[D: (GitDump, SessionDump, TelegramDump)](dump: D) -> D:
+def _with_size(dump: Dump) -> Dump:
     placeholder = dump.model_copy(update={"bytes": 0})
     # В заготовке `bytes` равен 0 — одна цифра. Длина файла с настоящим числом
     # больше на ширину этого числа минус эта цифра.
@@ -336,7 +352,7 @@ def _store(
     written: Mapping[SourceName, Dump],
     *,
     today: date,
-) -> tuple[Path | None, int, _Loaded]:
+) -> tuple[Path | None, int, StoredDumps]:
     state_dir = config.state.dir
     _private_dir(state_dir)
     raw_dir = state_dir / "raw"
@@ -361,8 +377,8 @@ def _total_bytes(day_dir: Path) -> int:
     )
 
 
-def _load(day_dir: Path) -> _Loaded:
-    return (
+def _load(day_dir: Path) -> StoredDumps:
+    return StoredDumps(
         _read(day_dir / "git.json", GitDump),
         _read(day_dir / "transcripts.json", SessionDump),
         _read(day_dir / "opencode.json", SessionDump),

@@ -20,6 +20,25 @@ _SUMMARY_CALL = re.compile(
 _BRIEFLY = "Briefly inform the user"
 _REVIEW = re.compile(r"^you are the (?:standards|spec) axis\b", re.IGNORECASE)
 _SPACES = re.compile(r"[ \t]+")
+_COMMIT_SHA = re.compile(r"(diff коммита) \S+")
+_SESSION_ID = re.compile(r"(сессия) \S+")
+_CHAT_ID = re.compile(r"(чат) \d+")
+
+
+def visible_truncation(note: str) -> str:
+    """Убрать sha, id сессии и id чата из строки обрезки.
+
+    Файл дампа эта функция не читает и не меняет.
+
+    Args:
+        note: Строка `truncations`, как она лежит в дампе.
+
+    Returns:
+        Та же строка без идентификаторов.
+    """
+    text = _COMMIT_SHA.sub(r"\1", note)
+    text = _SESSION_ID.sub(r"\1", text)
+    return _CHAT_ID.sub(r"\1", text)
 
 
 def render_git(dump: GitDump) -> str:
