@@ -1,7 +1,5 @@
 """Сессия Telethon и перевод ошибок подключения.
 
-Порт `tg.py` из Lancetnik/slop-writer, Apache-2.0:
-https://github.com/Lancetnik/slop-writer/blob/main/src/slop_writer/tg.py
 Проверка, отвергающая личный диалог (`User`), не перенесена: личка входит в саммари.
 """
 

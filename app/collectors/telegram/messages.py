@@ -1,7 +1,5 @@
 """Поля сообщения Telethon без сети и без файла сессии.
 
-Порт `messages.py` из Lancetnik/slop-writer, Apache-2.0:
-https://github.com/Lancetnik/slop-writer/blob/main/src/slop_writer/messages.py
 Реакции считаются здесь и в дамп не попадают: сборщик их не записывает.
 """
 
