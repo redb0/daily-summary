@@ -337,10 +337,16 @@ def test_rpc_error_on_one_chat_keeps_the_other(tmp_path: Path) -> None:
 def test_rpc_error_while_listing_dialogs_is_telegram(
     tmp_path: Path,
 ) -> None:
-    class _Dialogs(_Client):
-        async def iter_dialogs(self) -> AsyncIterator[SimpleNamespace]:
+    class _Raising:
+        def __aiter__(self) -> "_Raising":
+            return self
+
+        async def __anext__(self) -> SimpleNamespace:
             raise RPCError(None, "fail", 500)
-            yield SimpleNamespace()
+
+    class _Dialogs(_Client):
+        def iter_dialogs(self) -> AsyncIterator[SimpleNamespace]:
+            return _Raising()
 
     client = _Dialogs(entities={7: User(id=7)}, messages={7: [_message(1, "есть", "Коллега")]})
 

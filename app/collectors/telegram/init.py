@@ -1,7 +1,5 @@
 """Учётные данные и вход в Telegram. Спрашивает терминал, не этот модуль.
 
-Порт `init.py` из Lancetnik/slop-writer, Apache-2.0:
-https://github.com/Lancetnik/slop-writer/blob/main/src/slop_writer/init.py
 Секреты лежат в `~/.config/daily-summary/.env`, сессия — в каталоге состояния.
 `--relogin` удаляет файл сессии и не вызывает `log_out`: на отозванной сессии
 серверный выход упал бы и оставил мёртвый файл.

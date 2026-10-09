@@ -2,7 +2,7 @@
 
 ## Issue tracker
 
-Issues and specs live as markdown under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+Issues and specs live as GitHub issues. See `docs/agents/issue-tracker.md`.
 
 ## Domain docs
 
@@ -25,10 +25,12 @@ assert received[:2] == [
     ("new_message", 0, 0),
 ]
 
-assert snapshot == IsPartialDict({
-    "delivery_counts": HasLen(size),
-    "idle_times": HasLen(size),
-})
+assert snapshot == IsPartialDict(
+    {
+        "delivery_counts": HasLen(size),
+        "idle_times": HasLen(size),
+    }
+)
 ```
 
 Цепочка `assert x[0] ...`, `assert x[1] ...` или цикл с флагом `found` — это та же структура, растянутая по одному полю за раз: сверните её в одно сравнение. `IsPartialDict` принимает словарный литерал, поэтому ключи через точку и значения enum читаются так же, как конфиг, который они отражают. Сравнение, которое и так упадёт при отсутствующей доставке, самодостаточно; стоящий перед ним `assert event.is_set()` больше ничего не добавляет.

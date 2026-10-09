@@ -1,7 +1,5 @@
 """Сессия Telethon и перевод ошибок подключения.
 
-Порт `tg.py` из Lancetnik/slop-writer, Apache-2.0:
-https://github.com/Lancetnik/slop-writer/blob/main/src/slop_writer/tg.py
 Проверка, отвергающая личный диалог (`User`), не перенесена: личка входит в саммари.
 """
 
@@ -100,8 +98,7 @@ def require_session(session_file: Path) -> None:
         return
     message = f"Сессия Telegram не найдена: {session_file}"
     hint = (
-        f"Выполните {_SETUP} в своём терминале и выберите qr или code. "
-        "В чате агента вход зависнет."
+        f"Выполните {_SETUP} в своём терминале и выберите qr или code. В чате агента вход зависнет."
     )
     raise SummaryError(message, hint, ErrorCode.NO_SESSION)
 

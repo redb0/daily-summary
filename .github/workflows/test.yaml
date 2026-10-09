@@ -1,0 +1,98 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Ruff
+        run: |
+          uv run --frozen ruff check .
+          uv run --frozen ruff format --check .
+
+      - name: Mypy
+        run: uv run --frozen mypy app tests
+
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Пол от requires-python до 3.15 включительно.
+        python: ["3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+
+      - name: Run the suite
+        run: uv run --frozen --group dev pytest
+
+  wheel:
+    # Группа dev не должна попасть в метаданные колеса. Проверяем собранный
+    # артефакт: pytest, mypy, ruff и commitizen иначе станут зависимостями
+    # каждого, кто поставит daily-summary.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Build
+        run: uv build --no-sources
+
+      - name: Dev dependencies must not reach the wheel
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+
+          wheel = glob.glob("dist/*.whl")[0]
+          with zipfile.ZipFile(wheel) as z:
+              meta = next(n for n in z.namelist() if n.endswith("METADATA"))
+              text = z.read(meta).decode()
+              names = z.namelist()
+
+          requires = sorted(
+              line for line in text.splitlines()
+              if line.startswith(("Requires-Dist", "Provides-Extra"))
+          )
+          print(wheel, *requires, sep="\n  ")
+
+          leaked = ("pytest", "mypy", "ruff", "commitizen")
+          bad = [line for line in requires if any(name in line.lower() for name in leaked)]
+          if bad:
+              sys.exit(f"::error::dev dependency leaked into the wheel: {bad}")
+          if any(n.startswith("tests/") for n in names):
+              sys.exit("::error::tests/ was packaged into the wheel")
+          PY

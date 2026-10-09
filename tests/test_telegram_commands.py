@@ -258,7 +258,7 @@ def _client_factory(*, live: bool, relogin: bool = False, cloud: str | None = No
 class _PendingQr:
     url = "tg://login?token=test"
 
-    def __init__(self, login: object) -> None:
+    def __init__(self, login: "_Login") -> None:
         self.login = login
 
     async def wait(self) -> None:
