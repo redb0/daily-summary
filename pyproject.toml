@@ -1,5 +1,5 @@
 [project]
-name = "daily-summary"
+name = "day-recap"
 version = "0.2.0"
 description = "Саммари проделанной работы за день: задачи и принятые решения из git, транскриптов агентов и чатов Telegram"
 readme = "README.md"
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-daily-summary = "app.cli:main"
+day-recap = "app.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13"]

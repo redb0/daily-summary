@@ -19,7 +19,7 @@ from telethon.errors import (
 from app.config import Config
 from app.errors import ErrorCode, SummaryError
 
-_SETUP = "daily-summary init"
+_SETUP = "day-recap init"
 FLOOD_HINT = "Повторите сбор позже. Короткое ожидание инструмент пережидает сам."
 
 

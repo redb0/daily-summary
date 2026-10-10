@@ -1,4 +1,4 @@
-"""Точка входа команды `daily-summary`."""
+"""Точка входа команды `day-recap`."""
 
 import argparse
 import asyncio
@@ -27,7 +27,7 @@ from app.summary.collect import (
 from app.summary.models import Dump, GitDump, SessionDump, SourceStatus, TelegramDump, Window
 from app.summary.show import render_git, render_sessions, render_telegram, visible_truncation
 
-DISTRIBUTION = "daily-summary"
+DISTRIBUTION = "day-recap"
 _NOT_KEPT = "дамп не сохранён: дата старше ретенции"
 
 

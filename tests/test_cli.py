@@ -39,14 +39,14 @@ def test_version_flag_prints_declared_version(capsys: pytest.CaptureFixture[str]
         main(["--version"])
 
     assert exit_info.value.code == 0
-    assert capsys.readouterr().out.strip() == f"daily-summary {declared_version()}"
+    assert capsys.readouterr().out.strip() == f"day-recap {declared_version()}"
 
 
 def test_without_arguments_shows_usage(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = main([])
 
     assert exit_code == 0
-    assert "usage: daily-summary" in capsys.readouterr().out
+    assert "usage: day-recap" in capsys.readouterr().out
 
 
 def test_collect_writes_private_dump_and_prints_summary(
@@ -441,7 +441,7 @@ def test_show_drops_summary_calls_and_keeps_a_later_request(
                     "proj",
                     "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                     [
-                        ("user", "/daily-summary"),
+                        ("user", "/day-recap"),
                         ("assistant", "собрал"),
                         (
                             "user",
@@ -459,7 +459,7 @@ def test_show_drops_summary_calls_and_keeps_a_later_request(
                     "only-call",
                     "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
                     [
-                        ("user", "/daily-summary yesterday"),
+                        ("user", "/day-recap yesterday"),
                         ("assistant", "пусто"),
                     ],
                 ),
@@ -474,7 +474,7 @@ def test_show_drops_summary_calls_and_keeps_a_later_request(
                 (
                     "keep",
                     "dddddddd-dddd-dddd-dddd-dddddddddddd",
-                    [("user", "/daily-summary разобрать скилл")],
+                    [("user", "/day-recap разобрать скилл")],
                 ),
             ],
         ),
@@ -497,7 +497,7 @@ def test_show_drops_summary_calls_and_keeps_a_later_request(
             "assistant: разобрал\n"
             "\n"
             "## keep\n"
-            "user: /daily-summary разобрать скилл\n"
+            "user: /day-recap разобрать скилл\n"
         ),
         before,
     )
@@ -533,7 +533,7 @@ def test_show_marks_review_axis_and_repeat(
                     "alpha",
                     "66666666-6666-6666-6666-666666666666",
                     [
-                        ("user", "/daily-summary"),
+                        ("user", "/day-recap"),
                         ("assistant", "сначала"),
                         ("user", standards),
                     ],
@@ -1082,7 +1082,7 @@ def test_collect_marks_telegram_unavailable_and_keeps_other_sources(
     moment = datetime(2026, 10, 5, 12, 0, tzinfo=_MOSCOW)
     _freeze(monkeypatch, moment)
     _commit(tmp_path / "repos" / "demo", "коммит без чатов", moment)
-    env = home / ".config" / "daily-summary" / ".env"
+    env = home / ".config" / "day-recap" / ".env"
     env.parent.mkdir(parents=True)
     env.write_text("TG_API_ID=1\nTG_API_HASH=hash\nTG_PHONE=+79990000000\n", encoding="utf-8")
     config = _config_file(tmp_path, telegram=True)

@@ -30,7 +30,7 @@ def test_init_asks_only_for_the_missing_phone(
 
     exit_code = main(["init", "--login", "qr", "--config", str(config)])
 
-    env = (home / ".config" / "daily-summary" / ".env").read_text(encoding="utf-8")
+    env = (home / ".config" / "day-recap" / ".env").read_text(encoding="utf-8")
     out = capsys.readouterr().out
     assert (exit_code, env, out) == (
         0,
@@ -54,7 +54,7 @@ def test_init_from_scratch_writes_a_private_env_and_session(
 
     exit_code = main(["init", "--login", "qr", "--config", str(config)])
 
-    env_path = home / ".config" / "daily-summary" / ".env"
+    env_path = home / ".config" / "day-recap" / ".env"
     session = tmp_path / "state" / "session.session"
     out = capsys.readouterr().out
     assert (
@@ -225,7 +225,7 @@ def _isolate_home(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
 
 
 def _write_env(home: Path, text: str) -> None:
-    path = home / ".config" / "daily-summary" / ".env"
+    path = home / ".config" / "day-recap" / ".env"
     path.parent.mkdir(parents=True)
     path.write_text(text, encoding="utf-8")
 

@@ -1,4 +1,4 @@
-"""Чтение настроек daily-summary."""
+"""Чтение настроек day-recap."""
 
 from pathlib import Path
 
@@ -14,7 +14,7 @@ def _default_state_dir() -> Path:
     Returns:
         Путь по умолчанию.
     """
-    return Path.home() / ".local" / "state" / "daily-summary"
+    return Path.home() / ".local" / "state" / "day-recap"
 
 
 def _default_git_roots() -> list[Path]:
@@ -307,9 +307,9 @@ def default_config_path() -> Path:
     """Путь к конфигу, если флаг `--config` не передан.
 
     Returns:
-        `~/.config/daily-summary/config.toml`.
+        `~/.config/day-recap/config.toml`.
     """
-    return Path.home() / ".config" / "daily-summary" / "config.toml"
+    return Path.home() / ".config" / "day-recap" / "config.toml"
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -318,10 +318,10 @@ def load_config(path: Path | None = None) -> Config:
     Отсутствующий toml по умолчанию не ошибка: остаются значения по умолчанию.
     Пустой `notes.daily_dir` здесь не ошибка: сбор дампа не пишет в vault.
     Явный путь — это значение флага `--config`. Секреты при этом всё равно
-    читаются из `~/.config/daily-summary/.env`, а не из каталога toml.
+    читаются из `~/.config/day-recap/.env`, а не из каталога toml.
 
     Args:
-        path: Путь к toml. `None` — `~/.config/daily-summary/config.toml`.
+        path: Путь к toml. `None` — `~/.config/day-recap/config.toml`.
 
     Returns:
         Настройки из файла либо значения по умолчанию.
@@ -371,6 +371,6 @@ def require_notes_dir(config: Config) -> Path:
     daily_dir = config.notes.daily_dir
     if daily_dir is None:
         message = "Не задан каталог ежедневных заметок."
-        hint = "Укажите notes.daily_dir в ~/.config/daily-summary/config.toml."
+        hint = "Укажите notes.daily_dir в ~/.config/day-recap/config.toml."
         raise SummaryError(message, hint, ErrorCode.NO_NOTES_DIR)
     return daily_dir

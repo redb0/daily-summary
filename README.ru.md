@@ -1,9 +1,9 @@
-# daily-summary
+# day-recap
 
 [English](README.md)
 
-[![tests](https://github.com/redb0/daily-summary/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/redb0/daily-summary/actions/workflows/test.yaml)
-[![coverage](https://codecov.io/gh/redb0/daily-summary/branch/main/graph/badge.svg)](https://codecov.io/gh/redb0/daily-summary)
+[![tests](https://github.com/redb0/day-recap/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/redb0/day-recap/actions/workflows/test.yaml)
+[![coverage](https://codecov.io/gh/redb0/day-recap/branch/main/graph/badge.svg)](https://codecov.io/gh/redb0/day-recap)
 ![python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 
 Собирает проделанное за день из локальных репозиториев git, транскриптов
@@ -28,17 +28,17 @@ Obsidian попадает только подтверждённый блок.
 
 ```sh
 uv tool install --editable .
-mkdir -p ~/.config/daily-summary
-cp config.example.toml ~/.config/daily-summary/config.toml
+mkdir -p ~/.config/day-recap
+cp config.example.toml ~/.config/day-recap/config.toml
 ```
 
-`daily-summary init` запускайте в своём терминале, не в чате агента. `api_id` и
+`day-recap init` запускайте в своём терминале, не в чате агента. `api_id` и
 `api_hash` в чат не вводите. `init` спрашивает `qr` или `code`. `qr` печатает
 код для сканирования: Настройки → Устройства → Подключить устройство. `code`
 ждёт код из чата «Telegram» на уже открытом аккаунте. `--login qr` или
 `--login code` пропускают вопрос. `--relogin` входит заново.
 
-`daily-summary chats` печатает таблицу и готовые блоки `[[telegram.chats]]`.
+`day-recap chats` печатает таблицу и готовые блоки `[[telegram.chats]]`.
 Нужные блоки вставьте в секцию `[telegram]`. В дамп читаются только они.
 
 | Секция | Что задаёт |
@@ -55,16 +55,16 @@ cp config.example.toml ~/.config/daily-summary/config.toml
 
 - Порог — 100000 байт.
 - Дамп хранится 14 дней.
-- `~/.config/daily-summary/.env` создаётся с правами 600.
+- `~/.config/day-recap/.env` создаётся с правами 600.
 
 ## В агенте
 
-Положите [`SKILL.md`](SKILL.md) в `~/.agents/skills/daily-summary/SKILL.md`.
+Положите [`SKILL.md`](SKILL.md) в `~/.agents/skills/day-recap/SKILL.md`.
 
 ```text
-/daily-summary
-/daily-summary yesterday
-/daily-summary 2026-10-05
+/day-recap
+/day-recap yesterday
+/day-recap 2026-10-05
 ```
 
 Дата — `today`, `yesterday` или `YYYY-MM-DD`. Без даты окно идёт с локальной
@@ -86,9 +86,9 @@ cp config.example.toml ~/.config/daily-summary/config.toml
 принимает `--config PATH`. Без `--apply` заметка не меняется.
 
 ```sh
-daily-summary collect --date yesterday
-daily-summary show git --date 2026-10-05
-daily-summary write --date 2026-10-05 --body - --apply
+day-recap collect --date yesterday
+day-recap show git --date 2026-10-05
+day-recap write --date 2026-10-05 --body - --apply
 ```
 
 ## Разработка

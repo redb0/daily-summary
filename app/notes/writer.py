@@ -107,7 +107,7 @@ def _render_dates(template: str, day: date) -> str:
 def _missing_template(template: Path | None) -> SummaryError:
     if template is None:
         message = "Не задан шаблон ежедневной заметки."
-        hint = "Укажите notes.template в ~/.config/daily-summary/config.toml."
+        hint = "Укажите notes.template в ~/.config/day-recap/config.toml."
     else:
         message = "Файл шаблона ежедневной заметки не найден."
         hint = f"Проверьте путь notes.template: {template}."

@@ -15,7 +15,7 @@ from app.summary.models import (
 )
 
 _SUMMARY_CALL = re.compile(
-    r"^/daily-summary(?:[ \t]+(?:today|yesterday|\d{4}-\d{2}-\d{2}))?$",
+    r"^/day-recap(?:[ \t]+(?:today|yesterday|\d{4}-\d{2}-\d{2}))?$",
 )
 _BRIEFLY = "Briefly inform the user"
 _REVIEW = re.compile(r"^you are the (?:standards|spec) axis\b", re.IGNORECASE)

@@ -36,7 +36,7 @@ def test_missing_file_uses_builtin_defaults(
     assert config.notes.template is None
     assert config.notes.filename_format == "%Y-%m-%d"
     assert config.notes.timezone == "Europe/Moscow"
-    assert config.state.dir == home / ".local" / "state" / "daily-summary"
+    assert config.state.dir == home / ".local" / "state" / "day-recap"
     assert config.state.raw_retention_days == 14
     assert config.git.roots == [home / "projects"]
     assert config.git.max_depth == 3
@@ -102,7 +102,7 @@ def test_toml_overrides_defaults_and_expands_home(
 ) -> None:
     home = tmp_path / "home"
     _isolate_home(monkeypatch, home)
-    config_dir = home / ".config" / "daily-summary"
+    config_dir = home / ".config" / "day-recap"
     config_dir.mkdir(parents=True)
     (config_dir / "config.toml").write_text(
         """
@@ -191,7 +191,7 @@ def test_partial_toml_keeps_defaults_and_blank_dir_stays_unset(
 ) -> None:
     home = tmp_path / "home"
     _isolate_home(monkeypatch, home)
-    config_dir = home / ".config" / "daily-summary"
+    config_dir = home / ".config" / "day-recap"
     config_dir.mkdir(parents=True)
     (config_dir / "config.toml").write_text(
         """
@@ -213,7 +213,7 @@ template = ""
         "vvoronov@sila.ru",
         "30475117+redb0@users.noreply.github.com",
     ]
-    assert config.state.dir == home / ".local" / "state" / "daily-summary"
+    assert config.state.dir == home / ".local" / "state" / "day-recap"
 
 
 def test_secrets_are_read_from_dotenv_beside_config(
@@ -222,7 +222,7 @@ def test_secrets_are_read_from_dotenv_beside_config(
 ) -> None:
     home = tmp_path / "home"
     _isolate_home(monkeypatch, home)
-    config_dir = home / ".config" / "daily-summary"
+    config_dir = home / ".config" / "day-recap"
     config_dir.mkdir(parents=True)
     (config_dir / ".env").write_text(
         "TG_API_ID=12345\nTG_API_HASH=hash-from-dotenv\nTG_PHONE=+79990001122\n",
@@ -242,7 +242,7 @@ def test_explicit_config_path_keeps_default_env(
 ) -> None:
     home = tmp_path / "home"
     _isolate_home(monkeypatch, home)
-    default_dir = home / ".config" / "daily-summary"
+    default_dir = home / ".config" / "day-recap"
     default_dir.mkdir(parents=True)
     (default_dir / "config.toml").write_text(
         '[notes]\ntimezone = "Europe/Kaliningrad"\n',
@@ -301,7 +301,7 @@ def test_example_config_loads(
     assert config.notes.template is None
     assert config.notes.filename_format == "%Y-%m-%d"
     assert config.notes.timezone == "Europe/Moscow"
-    assert config.state.dir == home / ".local" / "state" / "daily-summary"
+    assert config.state.dir == home / ".local" / "state" / "day-recap"
     assert config.state.raw_retention_days == 14
     assert config.git.roots == [home / "projects"]
     assert config.git.authors == [

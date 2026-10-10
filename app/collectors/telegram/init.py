@@ -1,6 +1,6 @@
 """Учётные данные и вход в Telegram. Спрашивает терминал, не этот модуль.
 
-Секреты лежат в `~/.config/daily-summary/.env`, сессия — в каталоге состояния.
+Секреты лежат в `~/.config/day-recap/.env`, сессия — в каталоге состояния.
 `--relogin` удаляет файл сессии и не вызывает `log_out`: на отозванной сессии
 серверный выход упал бы и оставил мёртвый файл.
 """
@@ -33,16 +33,16 @@ type LoginMethod = Literal["qr", "code"]
 
 ENV_KEYS = ("TG_API_ID", "TG_API_HASH", "TG_PHONE")
 _CREDENTIALS_URL = "https://my.telegram.org/apps"
-_SETUP = "daily-summary init"
+_SETUP = "day-recap init"
 
 
 def credentials_path() -> Path:
     """Файл секретов рядом с конфигом по умолчанию, не рядом с `--config`.
 
     Returns:
-        `~/.config/daily-summary/.env`.
+        `~/.config/day-recap/.env`.
     """
-    return Path.home() / ".config" / "daily-summary" / ".env"
+    return Path.home() / ".config" / "day-recap" / ".env"
 
 
 def read_env(path: Path) -> dict[str, str]:

@@ -14,7 +14,7 @@ Status: accepted
 - `app/collectors/telegram/init.py` — секреты и вход;
 - `app/collectors/telegram/messages.py` — сообщение Telethon в поля дампа.
 
-Состояние сессии — `~/.local/state/daily-summary/`, не `.tg-analytic/` в корне проекта. Сбор списка чатов и обход белого списка — наши `chats.py` и `collector.py`, не часть порта.
+Состояние сессии — `~/.local/state/day-recap/`, не `.tg-analytic/` в корне проекта. Сбор списка чатов и обход белого списка — наши `chats.py` и `collector.py`, не часть порта.
 
 `init.py` проверяет живую сессию через `get_me`. Отозванная сессия оставляет файл на месте. `--relogin` удаляет файл и не вызывает `log_out`: на отозванной сессии серверный выход упал бы и оставил мёртвый файл.
 

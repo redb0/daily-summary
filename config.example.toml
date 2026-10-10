@@ -5,7 +5,7 @@ filename_format = "%Y-%m-%d"
 timezone = "Europe/Moscow"
 
 [state]
-dir = "~/.local/state/daily-summary"
+dir = "~/.local/state/day-recap"
 raw_retention_days = 14
 
 [git]

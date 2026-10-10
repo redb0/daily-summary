@@ -1,9 +1,9 @@
-# daily-summary
+# day-recap
 
 [Русский](README.ru.md)
 
-[![tests](https://github.com/redb0/daily-summary/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/redb0/daily-summary/actions/workflows/test.yaml)
-[![coverage](https://codecov.io/gh/redb0/daily-summary/branch/main/graph/badge.svg)](https://codecov.io/gh/redb0/daily-summary)
+[![tests](https://github.com/redb0/day-recap/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/redb0/day-recap/actions/workflows/test.yaml)
+[![coverage](https://codecov.io/gh/redb0/day-recap/branch/main/graph/badge.svg)](https://codecov.io/gh/redb0/day-recap)
 ![python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 
 Collects a day's work from local git repositories, Cursor transcripts, OpenCode
@@ -28,17 +28,17 @@ From a checkout of this repository:
 
 ```sh
 uv tool install --editable .
-mkdir -p ~/.config/daily-summary
-cp config.example.toml ~/.config/daily-summary/config.toml
+mkdir -p ~/.config/day-recap
+cp config.example.toml ~/.config/day-recap/config.toml
 ```
 
-Run `daily-summary init` in your own terminal, not in the agent chat. Do not
+Run `day-recap init` in your own terminal, not in the agent chat. Do not
 type `api_id` or `api_hash` into the chat. `init` asks `qr` or `code`. `qr`
 prints a code to scan: Settings → Devices → Link desktop device. `code` waits
 for the login code in the Telegram service chat. `--login qr` or `--login code`
 skips the question. `--relogin` signs in again.
 
-`daily-summary chats` prints a table and ready `[[telegram.chats]]` blocks.
+`day-recap chats` prints a table and ready `[[telegram.chats]]` blocks.
 Paste the blocks you want into the `[telegram]` section. Only those chats are
 read into the raw dump.
 
@@ -56,16 +56,16 @@ Keys and defaults are in [`config.example.toml`](config.example.toml).
 
 - The size threshold is 100000 bytes.
 - Raw dumps are kept for 14 days.
-- `~/.config/daily-summary/.env` is mode 600.
+- `~/.config/day-recap/.env` is mode 600.
 
 ## In the agent
 
-Copy [`SKILL.md`](SKILL.md) to `~/.agents/skills/daily-summary/SKILL.md`.
+Copy [`SKILL.md`](SKILL.md) to `~/.agents/skills/day-recap/SKILL.md`.
 
 ```text
-/daily-summary
-/daily-summary yesterday
-/daily-summary 2026-10-05
+/day-recap
+/day-recap yesterday
+/day-recap 2026-10-05
 ```
 
 The date is `today`, `yesterday`, or `YYYY-MM-DD`. With no date, the window
@@ -88,9 +88,9 @@ you name it. The source is optional: `git`, `transcripts`, `opencode`, or
 unchanged.
 
 ```sh
-daily-summary collect --date yesterday
-daily-summary show git --date 2026-10-05
-daily-summary write --date 2026-10-05 --body - --apply
+day-recap collect --date yesterday
+day-recap show git --date 2026-10-05
+day-recap write --date 2026-10-05 --body - --apply
 ```
 
 ## Development

@@ -10,7 +10,7 @@ Status: accepted
 
 ## Решение
 
-Сырые дампы лежат в `~/.local/state/daily-summary/raw/YYYY-MM-DD.json`, права 600, ретенция 14 дней. В vault попадает только текст, который человек подтвердил: `daily-summary write --apply`. Сессия Telethon лежит в том же каталоге состояния.
+Сырые дампы лежат в `~/.local/state/day-recap/raw/YYYY-MM-DD.json`, права 600, ретенция 14 дней. В vault попадает только текст, который человек подтвердил: `day-recap write --apply`. Сессия Telethon лежит в том же каталоге состояния.
 
 ## Отброшенные альтернативы
 

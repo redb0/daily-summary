@@ -1,4 +1,4 @@
-# daily-summary
+# day-recap
 
 ## Команды
 
@@ -32,11 +32,11 @@ Python 3.12+. Пакет `app` лежит в корне репозитория. 
 
 ## Границы
 
-Вход в Telegram выполняет человек в своём терминале: `daily-summary init`. Секреты и код из чата «Telegram» в переписку с агентом не попадают.
+Вход в Telegram выполняет человек в своём терминале: `day-recap init`. Секреты и код из чата «Telegram» в переписку с агентом не попадают.
 
-Сырой дамп и сессия Telethon лежат в `~/.local/state/daily-summary`. Ежедневную заметку меняет только `daily-summary write --apply`, и только после согласия человека ([ADR 0002](docs/adr/0002-raw-dumps-outside-vault.md)).
+Сырой дамп и сессия Telethon лежат в `~/.local/state/day-recap`. Ежедневную заметку меняет только `day-recap write --apply`, и только после согласия человека ([ADR 0002](docs/adr/0002-raw-dumps-outside-vault.md)).
 
-В коммит не входят `~/.config/daily-summary/`, файлы сессии и дампы.
+В коммит не входят `~/.config/day-recap/`, файлы сессии и дампы.
 
 Статусы дня называются словами из `CONTEXT.md`.
 
