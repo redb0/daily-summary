@@ -3,7 +3,7 @@
 import json
 from datetime import date, datetime
 
-from app.summary.models import GitDump, Window, parse_git_dump, render_dump
+from app.summary.models import GitDump, SourceStatus, Window, parse_git_dump, render_dump
 
 # Литерал схемы 2. Пробелы не значимы, значения — да.
 EXAMPLE = """
@@ -52,7 +52,7 @@ def test_git_dump_round_trip() -> None:
                 },
             ),
             generated_at=datetime.fromisoformat("2026-10-05T19:40:12+03:00"),
-            status="ok",
+            status=SourceStatus.OK,
             bytes=0,
         ),
         {
