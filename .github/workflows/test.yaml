@@ -39,7 +39,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Пол от requires-python до 3.15 включительно.
         python: ["3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,12 +51,24 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Run the suite
+        if: matrix.python != '3.12'
         run: uv run --frozen --group dev pytest
 
+      - name: Run the suite with coverage
+        if: matrix.python == '3.12'
+        run: uv run --frozen --group dev pytest --cov=app --cov-report=xml
+
+      - name: Upload coverage
+        if: matrix.python == '3.12' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          disable_search: true
+          fail_ci_if_error: false
+
   wheel:
-    # Группа dev не должна попасть в метаданные колеса. Проверяем собранный
-    # артефакт: pytest, mypy, ruff и commitizen иначе станут зависимостями
-    # каждого, кто поставит daily-summary.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
