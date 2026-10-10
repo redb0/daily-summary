@@ -22,3 +22,5 @@ coverage.xml
 # Редакторы
 .idea/
 .DS_Store
+
+.scratch
