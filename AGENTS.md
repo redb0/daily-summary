@@ -1,4 +1,44 @@
-# Agent skills
+# daily-summary
+
+## Команды
+
+Рецепты лежат в `justfile`. По умолчанию `just` гоняет `lint`, `types` и `test`.
+
+```sh
+just lint     # uv run ruff check . && uv run ruff format --check .
+just fmt      # uv run ruff format . && uv run ruff check --fix .
+just types    # uv run mypy app tests
+just test     # uv run pytest
+just install  # uv tool install --editable .
+```
+
+Один файл: `uv run pytest tests/test_raw_dump.py -q`. Рецепт `test` лишние аргументы не принимает.
+
+Python 3.12+. Пакет `app` лежит в корне репозитория. Зависимости ставятся через `uv`; `pytest`, `mypy`, `ruff` и `commitizen` остаются в группе `dev`. В метаданные колеса они не входят: это проверяет шаг wheel в `.github/workflows/test.yaml`.
+
+## Слои
+
+Зависимости идут внутрь: адаптер знает модель дня, модель дня не знает адаптер.
+
+| Модуль                                   | Роль                                                                         |
+|------------------------------------------|------------------------------------------------------------------------------|
+| `app/summary/models.py`, `app/errors.py` | Данные дня и `SummaryError`. Без Telethon, git, ежедневных заметок и `print` |
+| `app/collectors/`                        | Источник возвращает модели сводки и бросает `SummaryError`                   |
+| `app/summary/collect.py`                 | Сценарий дня: окно, статусы, маскирование, запись дампа                      |
+| `app/notes/`                             | Запись ежедневной заметки                                                    |
+| `app/cli.py`                             | Аргументы и текст ошибки для человека (`_print_error`)                       |
+
+Новый ввод-вывод — функция коллектора, которую вызывает сценарий дня.
+
+## Границы
+
+Вход в Telegram выполняет человек в своём терминале: `daily-summary init`. Секреты и код из чата «Telegram» в переписку с агентом не попадают.
+
+Сырой дамп и сессия Telethon лежат в `~/.local/state/daily-summary`. Ежедневную заметку меняет только `daily-summary write --apply`, и только после согласия человека ([ADR 0002](docs/adr/0002-raw-dumps-outside-vault.md)).
+
+В коммит не входят `~/.config/daily-summary/`, файлы сессии и дампы.
+
+Статусы дня называются словами из `CONTEXT.md`.
 
 ## Issue tracker
 
@@ -34,3 +74,13 @@ assert snapshot == IsPartialDict(
 ```
 
 Цепочка `assert x[0] ...`, `assert x[1] ...` или цикл с флагом `found` — это та же структура, растянутая по одному полю за раз: сверните её в одно сравнение. `IsPartialDict` принимает словарный литерал, поэтому ключи через точку и значения enum читаются так же, как конфиг, который они отражают. Сравнение, которое и так упадёт при отсутствующей доставке, самодостаточно; стоящий перед ним `assert event.is_set()` больше ничего не добавляет.
+
+Стабильная проверка ошибки — `SummaryError.code`. Если в контракт входит и текст, код, сообщение и побочный эффект сравниваются одним кортежем, как в `tests/test_note_writer.py`.
+
+Тест работает на `tmp_path` и подставном клиенте. Сеть, живая сессия Telegram и ежедневные заметки пользователя в набор не входят.
+
+## Релиз
+
+Версия записана в `pyproject.toml`. Код читает её через `importlib.metadata`. Поднятие — `uv run cz bump`: conventional commits, тег равен версии без префикса `v`, changelog обновляет commitizen. Отдельного рецепта в `justfile` нет.
+
+Публикация — GitHub Release. `.github/workflows/publish.yaml` сверяет имя тега с `uv version --short` и выкладывает пакет на PyPI. Релиз создаётся по прямой просьбе.
