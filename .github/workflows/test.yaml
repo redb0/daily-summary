@@ -39,7 +39,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Пол от requires-python до 3.15 включительно.
         python: ["3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,8 +50,6 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python }}
 
-      # Один отчёт на щит: матрица 3.13–3.15 покрытие не считает,
-      # pull request отчёт не заливает.
       - name: Run the suite
         if: matrix.python != '3.12'
         run: uv run --frozen --group dev pytest
@@ -72,9 +69,6 @@ jobs:
           fail_ci_if_error: false
 
   wheel:
-    # Группа dev не должна попасть в метаданные колеса. Проверяем собранный
-    # артефакт: pytest, mypy, ruff и commitizen иначе станут зависимостями
-    # каждого, кто поставит daily-summary.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
