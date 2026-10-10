@@ -1,5 +1,6 @@
 """Сборщик Telegram через подменённый клиент: сеть не вызывается."""
 
+import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time
@@ -25,7 +26,7 @@ from app.config import (
 )
 from app.errors import ErrorCode, SummaryError
 from app.summary.collect import collect_and_store
-from app.summary.models import SourceStatus, TelegramChatLog, TelegramMessage, Window
+from app.summary.models import TelegramChatLog, TelegramMessage, Window
 
 _MOSCOW = ZoneInfo("Europe/Moscow")
 _DAY = date(2026, 10, 5)
@@ -530,14 +531,13 @@ def test_stored_dump_counts_telegram_messages(
         telegram=TelegramConfig(chats=[TelegramChat(id=7, name="личка")]),
     )
 
-    _path, dump = collect_and_store(config, "2026-10-05")
+    collect_and_store(config, "2026-10-05")
 
-    assert (
-        dump.sources.telegram.status,
-        dump.sources.telegram.unlisted_active,
-        [(message.text) for chat in dump.sources.telegram.chats for message in chat.messages],
-        dump.stats.messages,
-    ) == (SourceStatus.OK, 1, ["созвон в 15"], 1)
+    payload = json.loads(
+        (tmp_path / "state" / "raw" / "2026-10-05" / "telegram.json").read_text(encoding="utf-8"),
+    )
+    texts = [message["text"] for chat in payload["chats"] for message in chat["messages"]]
+    assert (payload["status"], payload["unlisted_active"], texts) == ("ok", 1, ["созвон в 15"])
 
 
 def _window() -> Window:

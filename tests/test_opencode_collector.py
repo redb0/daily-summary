@@ -20,13 +20,7 @@ from app.config import (
     TranscriptsConfig,
 )
 from app.summary.collect import collect_and_store
-from app.summary.models import (
-    SourceStatus,
-    TranscriptMessage,
-    TranscriptSession,
-    TranscriptsSource,
-    Window,
-)
+from app.summary.models import TranscriptMessage, TranscriptSession, Window
 
 _MOSCOW = ZoneInfo("Europe/Moscow")
 _SESSION = "ses_today"
@@ -248,33 +242,35 @@ def test_collected_session_is_counted_in_the_dump(
     connection.commit()
     connection.close()
 
-    _path, dump = collect_and_store(_day_config(tmp_path, db=db), "2026-10-05")
+    collect_and_store(_day_config(tmp_path, db=db), "2026-10-05")
 
-    assert (dump.sources.opencode, dump.stats.sessions, dump.stats.messages) == (
-        TranscriptsSource(
-            status=SourceStatus.OK,
-            sessions=[
-                TranscriptSession(
-                    project=_DIRECTORY,
-                    id=_SESSION,
-                    messages=[TranscriptMessage(role="user", text="сегодня")],
-                ),
-            ],
-        ),
-        1,
-        1,
+    payload = json.loads(
+        (tmp_path / "state" / "raw" / "2026-10-05" / "opencode.json").read_text(encoding="utf-8"),
+    )
+    assert (payload["status"], payload["sessions"]) == (
+        "ok",
+        [
+            {
+                "project": _DIRECTORY,
+                "id": _SESSION,
+                "messages": [{"role": "user", "text": "сегодня"}],
+            },
+        ],
     )
 
 
 def test_disabled_source_stays_disabled_when_the_database_is_missing(tmp_path: Path) -> None:
     missing = tmp_path / "missing.db"
 
-    _path, dump = collect_and_store(
+    collect_and_store(
         _day_config(tmp_path, db=missing, enabled=False),
         "2026-10-05",
     )
 
-    assert dump.sources.opencode == TranscriptsSource(status=SourceStatus.DISABLED)
+    payload = json.loads(
+        (tmp_path / "state" / "raw" / "2026-10-05" / "opencode.json").read_text(encoding="utf-8"),
+    )
+    assert (payload["status"], payload["sessions"]) == ("disabled", [])
 
 
 def _day_config(root: Path, *, db: Path, enabled: bool = True) -> Config:

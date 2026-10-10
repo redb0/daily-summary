@@ -27,16 +27,6 @@ class Window(BaseModel):
     to: AwareDatetime
 
 
-class Source(BaseModel):
-    """Общая часть источника: статус и, если собрать не удалось, код с причиной."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: SourceStatus
-    code: ErrorCode | None = None
-    reason: str | None = None
-
-
 class GitCommit(BaseModel):
     """Коммит из окна дня: метаданные и уже усечённый diff."""
 
@@ -69,12 +59,6 @@ class GitRepo(BaseModel):
     dirty: GitDirty | None = None
 
 
-class GitSource(Source):
-    """Коммиты. Содержимое `repos` заполняет сборщик git."""
-
-    repos: list[GitRepo] = Field(default_factory=list)
-
-
 class TranscriptMessage(BaseModel):
     """Текст реплики. Блоки инструментов в дамп не попадают."""
 
@@ -98,21 +82,6 @@ class TranscriptSession(BaseModel):
     messages: list[TranscriptMessage]
 
 
-class TranscriptsSource(Source):
-    """Сессии агента. Одно и то же поле у Cursor и у OpenCode."""
-
-    sessions: list[TranscriptSession] = Field(default_factory=list)
-
-
-def _disabled_opencode() -> TranscriptsSource:
-    """Старые дампы не знали про OpenCode.
-
-    Returns:
-        Выключенный источник без сессий.
-    """
-    return TranscriptsSource(status=SourceStatus.DISABLED)
-
-
 class TelegramMessage(BaseModel):
     """Сообщение из белого списка. Реакции и служебные события сюда не попадают."""
 
@@ -133,75 +102,66 @@ class TelegramChatLog(BaseModel):
     messages: list[TelegramMessage]
 
 
-class TelegramSource(Source):
-    """Чаты Telegram. Содержимое заполняет сборщик Telegram.
+class SourceDump(BaseModel):
+    """Один источник за день: своё окно, статус и размер файла.
 
-    `unlisted_active` — сколько чатов с активностью в окне нет в конфиге.
-    Содержимое этих чатов не читается.
+    Сводка дня из этих полей считается при печати, отдельным файлом не лежит.
     """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[2] = 2
+    date: date
+    window: Window
+    generated_at: AwareDatetime
+    status: SourceStatus
+    code: ErrorCode | None = None
+    reason: str | None = None
+    bytes: int = 0
+    truncations: list[str] = Field(default_factory=list)
+
+
+class GitDump(SourceDump):
+    """Коммиты и незакоммиченные файлы. Лежит в `git.json`."""
+
+    repos: list[GitRepo] = Field(default_factory=list)
+
+
+class SessionDump(SourceDump):
+    """Сессии агента. `transcripts.json` и `opencode.json` устроены одинаково."""
+
+    sessions: list[TranscriptSession] = Field(default_factory=list)
+
+
+class TelegramDump(SourceDump):
+    """Чаты белого списка. `unlisted_active` — активность вне конфига, без текста."""
 
     chats: list[TelegramChatLog] = Field(default_factory=list)
     unlisted_active: int = 0
 
 
-class Sources(BaseModel):
-    """Источники дня, каждый со своим статусом.
-
-    `opencode` по умолчанию выключен: старый дамп без этого ключа читается.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    git: GitSource
-    transcripts: TranscriptsSource
-    opencode: TranscriptsSource = Field(default_factory=_disabled_opencode)
-    telegram: TelegramSource
+Dump = GitDump | SessionDump | TelegramDump
 
 
-class Stats(BaseModel):
-    """Сводка объёма для stdout и для порога двух проходов."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    commits: int
-    messages: int
-    sessions: int
-    bytes: int
-
-
-class RawDump(BaseModel):
-    """Сырой дамп одного дня."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    schema_version: Literal[1]
-    date: date
-    window: Window
-    generated_at: AwareDatetime
-    sources: Sources
-    stats: Stats
-    truncations: list[str]
-
-
-def parse_raw_dump(payload: str) -> RawDump:
-    """Прочитать дамп из JSON.
+def parse_git_dump(payload: str) -> GitDump:
+    """Прочитать дамп git из JSON.
 
     Args:
-        payload: Содержимое файла дампа.
+        payload: Содержимое `git.json`.
 
     Returns:
         Разобранный дамп.
     """
-    return RawDump.model_validate_json(payload)
+    return GitDump.model_validate_json(payload)
 
 
-def render_raw_dump(dump: RawDump) -> str:
-    """Сериализовать дамп в JSON, который читает `parse_raw_dump`.
+def render_dump(dump: Dump) -> str:
+    """Сериализовать дамп источника в JSON.
 
-    Пустые `code` и `reason` не пишутся: у успешного источника их нет.
+    Пустые `code` и `reason` не пишутся: у собранного источника их нет.
 
     Args:
-        dump: Дамп.
+        dump: Дамп одного источника.
 
     Returns:
         JSON-текст.
