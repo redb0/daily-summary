@@ -4,7 +4,7 @@ Status: accepted
 
 ## Контекст
 
-Чтение Telegram уже сделано в [Lancetnik/slop-writer](https://github.com/Lancetnik/slop-writer) (Apache-2.0). Пакет целиком к нашему состоянию не подходит.
+Чтение Telegram уже сделано в [Lancetnik/slop-writer](https://github.com/Lancetnik/slop-writer). Пакет целиком к нашему состоянию не подходит.
 
 ## Решение
 
