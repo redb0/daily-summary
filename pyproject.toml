@@ -1,6 +1,6 @@
 [project]
 name = "day-recap"
-version = "0.2.0"
+version = "0.2.1"
 description = "Саммари проделанной работы за день: задачи и принятые решения из git, транскриптов агентов и чатов Telegram"
 readme = "README.md"
 requires-python = ">=3.12"
