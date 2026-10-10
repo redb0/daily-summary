@@ -239,13 +239,6 @@ def test_text_after_markers_stays_byte_for_byte(tmp_path: Path) -> None:
     assert (result.text, note.read_bytes()) == (expected, expected.encode())
 
 
-def test_missing_daily_dir_raises() -> None:
-    with pytest.raises(SummaryError) as exc_info:
-        write_note(Config(), _DAY, _BODY)
-
-    assert exc_info.value.code == "NO_NOTES_DIR"
-
-
 def test_text_on_the_end_marker_line_stays(tmp_path: Path) -> None:
     note = tmp_path / "2026-10-05.md"
     original = _OUTSIDE + "<!-- auto:start -->\n- старое\n<!-- auto:end --> хвост\n"

@@ -2,14 +2,14 @@
 
 import os
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.collectors.git import CollectedGit, collect_git
-from app.config import Config, GitConfig, NotesConfig, load_config
+from app.config import Config, GitConfig, NotesConfig
 from app.summary.models import GitCommit, GitDirty, GitRepo, Window
 
 _MOSCOW = ZoneInfo("Europe/Moscow")
@@ -352,18 +352,3 @@ def test_day_budget_drops_the_largest_commit_diff(tmp_path: Path) -> None:
             ),
         ],
     )
-
-
-def test_real_projects_week_fits_the_day_budget() -> None:
-    config = load_config()
-    zone = ZoneInfo(config.notes.timezone)
-    end = datetime.now(zone)
-    collected = collect_git(config, _window(end - timedelta(days=7), end))
-    total = sum(
-        len(commit.diff.splitlines())
-        for repo in collected.repos
-        for commit in repo.commits
-        if commit.diff is not None
-    )
-
-    assert total <= config.git.max_diff_lines_per_day

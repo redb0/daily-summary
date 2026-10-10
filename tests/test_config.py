@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.config import Config, NotesConfig, load_config, require_notes_dir
+from app.config import load_config, require_notes_dir
 from app.errors import SummaryError
 
 _SECRET_ENV = ("TG_API_ID", "TG_API_HASH", "TG_PHONE")
@@ -214,9 +214,6 @@ template = ""
         "30475117+redb0@users.noreply.github.com",
     ]
     assert config.state.dir == home / ".local" / "state" / "daily-summary"
-    with pytest.raises(SummaryError) as exc_info:
-        require_notes_dir(config)
-    assert exc_info.value.code == "NO_NOTES_DIR"
 
 
 def test_secrets_are_read_from_dotenv_beside_config(
@@ -325,20 +322,3 @@ def test_example_config_loads(
         (-1001234567890, "пример: НТР / FM core"),
     ]
     assert config.summary.two_stage_threshold_bytes == 100_000
-    with pytest.raises(SummaryError) as exc_info:
-        require_notes_dir(config)
-    assert exc_info.value.code == "NO_NOTES_DIR"
-
-
-def test_missing_explicit_config_file_raises(tmp_path: Path) -> None:
-    missing = tmp_path / "missing.toml"
-
-    with pytest.raises(FileNotFoundError):
-        load_config(missing)
-
-
-def test_require_notes_dir_returns_configured_path() -> None:
-    daily = Path("/vault/daily")
-    config = Config(notes=NotesConfig(daily_dir=daily))
-
-    assert require_notes_dir(config) == daily

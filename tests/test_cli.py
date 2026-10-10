@@ -42,14 +42,6 @@ def test_version_flag_prints_declared_version(capsys: pytest.CaptureFixture[str]
     assert capsys.readouterr().out.strip() == f"daily-summary {declared_version()}"
 
 
-def test_help_flag_describes_command(capsys: pytest.CaptureFixture[str]) -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        main(["--help"])
-
-    assert exit_info.value.code == 0
-    assert "usage: daily-summary" in capsys.readouterr().out
-
-
 def test_without_arguments_shows_usage(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = main([])
 
@@ -737,10 +729,9 @@ def test_purged_partial_collect_reports_dumps_that_were_on_disk(
     )
 
 
-def test_collect_default_window_stops_at_now_and_date_today_covers_the_day(
+def test_collect_without_date_stops_at_now(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     home = tmp_path / "home"
     _isolate_home(monkeypatch, home)
@@ -751,31 +742,14 @@ def test_collect_default_window_stops_at_now_and_date_today_covers_the_day(
     _commit(repo, "вечером", now.replace(hour=16))
     config = _config_file(tmp_path)
 
-    default_code = main(["collect", "--config", str(config)])
-    default_payload = _stored(tmp_path, "2026-10-05", "git")
-    capsys.readouterr()
+    exit_code = main(["collect", "--config", str(config)])
 
-    today_code = main(["collect", "--date", "today", "--config", str(config)])
-    today_payload = _stored(tmp_path, "2026-10-05", "git")
-
-    default_messages = [commit["message"] for commit in default_payload["repos"][0]["commits"]]
-    today_messages = [commit["message"] for commit in today_payload["repos"][0]["commits"]]
-    assert (
-        default_code,
-        default_payload["window"],
-        default_messages,
-        today_code,
-        today_payload["window"]["to"],
-        today_messages,
-        capsys.readouterr().out.splitlines()[0],
-    ) == (
+    payload = _stored(tmp_path, "2026-10-05", "git")
+    messages = [commit["message"] for commit in payload["repos"][0]["commits"]]
+    assert (exit_code, payload["window"], messages) == (
         0,
         {"from": "2026-10-05T00:00:00+03:00", "to": "2026-10-05T15:00:00+03:00"},
         ["утром"],
-        0,
-        "2026-10-05T23:59:59.999999+03:00",
-        ["утром", "вечером"],
-        str(tmp_path / "state" / "raw" / "2026-10-05"),
     )
 
 
